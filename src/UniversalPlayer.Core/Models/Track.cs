@@ -27,6 +27,18 @@ public sealed class Track
     public DateTime? LastPlayedUtc { get; set; }
     public bool Missing { get; set; }
 
+    /// <summary>Descriptive content tags produced by the analysis pass, ';'-separated
+    /// (e.g. "piano;calm;instrumental"); editable by hand.</summary>
+    public string? ContentTags { get; set; }
+
+    /// <summary>When the content analysis last ran; null means "unanalysed".</summary>
+    public DateTime? AnalysedUtc { get; set; }
+
+    public double? AnalysisConfidence { get; set; }
+
+    public bool IsAnalysed => AnalysedUtc is not null;
+    public string DisplayTags => string.IsNullOrWhiteSpace(ContentTags) ? (IsAnalysed ? "-" : "...") : ContentTags!;
+
     /// <summary>Lower-cased, denormalised blob used for fast, case-insensitive (incl. Cyrillic) search.</summary>
     public string SearchText { get; set; } = string.Empty;
 

@@ -16,6 +16,10 @@ public static class AudioFeatureExtractor
     private const int M = 10; // 2^10 == FrameSize
 
     public static TrackFeatures? Extract(string path, double maxSeconds = 30, CancellationToken ct = default)
+        => ExtractDetailed(path, maxSeconds, ct)?.Base;
+
+    /// <summary>Extracts both the basic genre descriptors and the extra content features.</summary>
+    public static DetailedFeatures? ExtractDetailed(string path, double maxSeconds = 30, CancellationToken ct = default)
     {
         float[] samples;
         int sampleRate;
@@ -37,6 +41,18 @@ public static class AudioFeatureExtractor
     private static (float[] Samples, int SampleRate) ReadMono(string path, double maxSeconds, CancellationToken ct)
     {
         using var reader = AudioStreamFactory.Open(path);
+
+        // Analyse the body of the track, not only the intro, so quiet intros do not colour the result.
+        try
+        {
+            if (reader.CanSeek && reader.TotalTime.TotalSeconds > 75)
+                reader.CurrentTime = TimeSpan.FromSeconds(reader.TotalTime.TotalSeconds * 0.15);
+        }
+        catch
+        {
+            // non-seekable source: analyse from the start
+        }
+
         var provider = reader.ToSampleProvider();
         var channels = Math.Max(1, provider.WaveFormat.Channels);
         var rate = provider.WaveFormat.SampleRate;
@@ -63,14 +79,18 @@ public static class AudioFeatureExtractor
         return (mono.ToArray(), rate);
     }
 
-    private static TrackFeatures Analyse(float[] samples, int sampleRate)
+    private static DetailedFeatures Analyse(float[] samples, int sampleRate)
     {
         var window = new double[FrameSize];
         for (var i = 0; i < FrameSize; i++)
             window[i] = 0.5 - 0.5 * Math.Cos(2 * Math.PI * i / (FrameSize - 1));
 
-        double nyquist = sampleRate / 2.0;
         double binHz = sampleRate / (double)FrameSize;
+        var nyquist = sampleRate / 2.0;
+
+        // band edges (Hz): sub-bass, bass, low-mid, high-mid, high
+        var bandEdges = new[] { 120.0, 250.0, 800.0, 2500.0, 5000.0, nyquist };
+        var bandEnergy = new double[bandEdges.Length];
 
         var fft = new Complex[FrameSize];
         var prevMag = new double[FrameSize / 2];
@@ -121,7 +141,6 @@ public static class AudioFeatureExtractor
             var meanMag = magSum / (FrameSize / 2) + 1e-9;
             var geoMag = Math.Exp(magLogSum / (FrameSize / 2));
             var flatness = Math.Clamp(geoMag / meanMag, 0, 1);
-
             var centroid = magSum > 1e-9 ? centroidNum / magSum : 0;
 
             double cumulative = 0, rolloff = 0;
@@ -139,6 +158,17 @@ public static class AudioFeatureExtractor
                 if (d > 0) fluxFrame += d;
                 prevMag[k] = mag[k];
                 totalEnergy += mag[k] * mag[k];
+
+                // spectral bands
+                var freq = k * binHz;
+                for (var b = 0; b < bandEdges.Length; b++)
+                {
+                    if (freq < bandEdges[b])
+                    {
+                        bandEnergy[b] += mag[k] * mag[k];
+                        break;
+                    }
+                }
             }
 
             rmsList.Add(rms);
@@ -153,10 +183,23 @@ public static class AudioFeatureExtractor
         var fps = sampleRate / (double)HopSize;
         var tempo = EstimateTempo(flux, fps);
         var onsetRate = EstimateOnsetRate(flux, fps);
+        var transientRate = EstimateTransientRate(flux, fps);
         var dynRange = DynamicRangeDb(rmsList);
         var silence = rmsList.Count > 0 ? rmsList.Count(r => r < 0.004) / (double)rmsList.Count : 0;
 
-        return new TrackFeatures(
+        var bandTotal = bandEnergy.Sum();
+        if (bandTotal <= 0) bandTotal = 1;
+        var subBass = bandEnergy[0] / bandTotal;
+        var bass = bandEnergy[1] / bandTotal;
+        var mid = (bandEnergy[2] + bandEnergy[3]) / bandTotal;
+        var high = (bandEnergy[4] + bandEnergy[5]) / bandTotal;
+
+        var tonality = Math.Clamp(1 - Mean(flatnessList), 0, 1);
+        var percussiveness = Math.Clamp(transientRate / 4.0, 0, 1);
+        var vocal = Math.Clamp(mid * tonality * 1.6 * (1 - percussiveness * 0.5), 0, 1);
+        var tilt = Math.Clamp((Math.Log10((high + 1e-6) / (subBass + bass + 1e-6)) + 1.2) / 2.4, 0, 1);
+
+        var baseFeatures = new TrackFeatures(
             DurationSeconds: samples.Length / (double)sampleRate,
             Rms: Mean(rmsList),
             Peak: peak,
@@ -171,6 +214,17 @@ public static class AudioFeatureExtractor
             OnsetRate: onsetRate,
             DynamicRangeDb: dynRange,
             SilenceRatio: silence);
+
+        return new DetailedFeatures(baseFeatures, subBass, bass, mid, high, tilt, percussiveness, vocal);
+    }
+
+    private static double EstimateTransientRate(List<double> flux, double fps)
+    {
+        if (flux.Count < 3) return 0;
+        var mean = Mean(flux) + 1e-9;
+        var peaks = flux.Count(v => v > mean * 2.0);
+        var seconds = flux.Count / fps;
+        return seconds > 0 ? peaks / seconds : 0;
     }
 
     private static double EstimateTempo(List<double> flux, double fps)

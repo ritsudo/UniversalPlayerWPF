@@ -54,6 +54,35 @@ public sealed class Database
         using var cmd = conn.CreateCommand();
         cmd.CommandText = Schema;
         cmd.ExecuteNonQuery();
+        EnsureColumns(conn);
+    }
+
+    /// <summary>Adds columns introduced after the first release, so an existing database keeps working.</summary>
+    private static void EnsureColumns(SqliteConnection conn)
+    {
+        var existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        using (var info = conn.CreateCommand())
+        {
+            info.CommandText = "PRAGMA table_info(tracks);";
+            using var reader = info.ExecuteReader();
+            while (reader.Read())
+                existing.Add(reader.GetString(1));
+        }
+
+        var additions = new (string Name, string Ddl)[]
+        {
+            ("content_tags", "ALTER TABLE tracks ADD COLUMN content_tags TEXT;"),
+            ("analysed_utc", "ALTER TABLE tracks ADD COLUMN analysed_utc TEXT;"),
+            ("analysis_conf", "ALTER TABLE tracks ADD COLUMN analysis_conf REAL;")
+        };
+
+        foreach (var (name, ddl) in additions)
+        {
+            if (existing.Contains(name)) continue;
+            using var alter = conn.CreateCommand();
+            alter.CommandText = ddl;
+            alter.ExecuteNonQuery();
+        }
     }
 
     private const string Schema = """
@@ -81,7 +110,10 @@ public sealed class Database
             play_count       INTEGER NOT NULL DEFAULT 0,
             last_played_utc  TEXT,
             missing          INTEGER NOT NULL DEFAULT 0,
-            search_text      TEXT    NOT NULL DEFAULT ''
+            search_text      TEXT    NOT NULL DEFAULT '',
+            content_tags     TEXT,
+            analysed_utc     TEXT,
+            analysis_conf    REAL
         );
 
         CREATE INDEX IF NOT EXISTS ix_tracks_artist  ON tracks(artist);

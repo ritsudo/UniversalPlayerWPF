@@ -58,7 +58,8 @@ public partial class App : Application
         var playlists = new PlaylistRepository(db);
         var historyRepo = new HistoryRepository(db);
         var classifier = ClassificationService.CreateDefault();
-        var library = new LibraryService(db, tracks, artists, classifier);
+        var content = new UniversalPlayer.Classification.Content.ContentAnalyzer();
+        var library = new LibraryService(db, tracks, artists, classifier, content);
         var recommendation = new RecommendationService(tracks, historyRepo);
         var history = new HistoryService(historyRepo);
         var player = new AudioPlayerService();

@@ -1,14 +1,16 @@
 using System.IO;
 using UniversalPlayer.Classification;
+using UniversalPlayer.Classification.Content;
 using UniversalPlayer.Core.Data;
+using UniversalPlayer.Core.Genres;
 using UniversalPlayer.Core.Library;
 using UniversalPlayer.Core.Models;
 
 namespace UniversalPlayer.App.Services;
 
 /// <summary>
-/// Coordinates a full rescan and the background classification pass that tags
-/// newly discovered tracks with a genre.
+/// Coordinates a full rescan, the genre classification pass and the experimental
+/// content analysis pass.
 /// </summary>
 public sealed class LibraryService
 {
@@ -16,17 +18,26 @@ public sealed class LibraryService
     private readonly TrackRepository _tracks;
     private readonly ArtistRepository _artists;
     private readonly ClassificationService _classifier;
+    private readonly ContentAnalyzer _content;
 
-    public LibraryService(Database db, TrackRepository tracks, ArtistRepository artists, ClassificationService classifier)
+    public LibraryService(
+        Database db,
+        TrackRepository tracks,
+        ArtistRepository artists,
+        ClassificationService classifier,
+        ContentAnalyzer content)
     {
         _db = db;
         _tracks = tracks;
         _artists = artists;
         _classifier = classifier;
+        _content = content;
     }
 
     public event Action<string>? Status;
     public event Action<int, int>? Progress;
+
+    public string ContentModelPath => _content.ModelPath;
 
     public Task<ScanReport> RescanAsync(string root, CancellationToken ct) =>
         Task.Run(() =>
@@ -122,4 +133,58 @@ public sealed class LibraryService
         Status?.Invoke($"Classification finished ({done} track(s)).");
         return done;
     }
+
+    /// <summary>
+    /// The experimental content analysis: describe each recording with tags such as
+    /// "piano", "guitar solo", "calm", "vocals" and store them (editable) in the database.
+    /// Cancellable, and skips already-analysed tracks when <paramref name="onlyUnanalysed"/> is set.
+    /// </summary>
+    public Task<int> AnalyzeContentAsync(bool onlyUnanalysed, CancellationToken ct) =>
+        Task.Run(() =>
+        {
+            var all = _tracks.Search(null, null, 200_000);
+            var todo = onlyUnanalysed ? all.Where(t => !t.IsAnalysed).ToList() : all;
+            if (todo.Count == 0)
+            {
+                Status?.Invoke("Nothing to analyse - every track is already analysed.");
+                return 0;
+            }
+
+            if (_content.NeedsCalibration)
+            {
+                Status?.Invoke("Calibrating the content model on a sample of your collection ...");
+                _content.Calibrate(all.Select(t => t.Path).ToList(), 150, ct);
+            }
+
+            Status?.Invoke($"Analysing {todo.Count} track(s) with the local content model ...");
+            var done = 0;
+
+            foreach (var track in todo)
+            {
+                ct.ThrowIfCancellationRequested();
+                try
+                {
+                    var result = _content.Analyze(track.Path, ct);
+                    var tags = ContentTagComposer.Compose(result?.Tags, track.Year, track.Genre);
+                    _tracks.SetAnalysis(track.Id, tags, result?.Confidence ?? 0);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch
+                {
+                    // undecodable / unsupported: mark as analysed so it is not retried forever
+                    _tracks.SetAnalysis(track.Id, null, 0);
+                }
+
+                done++;
+                Progress?.Invoke(done, todo.Count);
+                if (done % 5 == 0 || done == todo.Count)
+                    Status?.Invoke($"Analysed {done}/{todo.Count}: {track.DisplayTitle}");
+            }
+
+            Status?.Invoke($"Content analysis finished ({done} track(s)).");
+            return done;
+        }, ct);
 }

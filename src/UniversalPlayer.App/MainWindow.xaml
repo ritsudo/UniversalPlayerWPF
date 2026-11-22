@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Universal Player"
         Height="820" Width="1440" MinHeight="600" MinWidth="980"
+        Background="{StaticResource Bg}" Foreground="{StaticResource Text}" FontSize="13" FontFamily="Segoe UI"
         Icon="Assets/app.ico"
         WindowStartupLocation="CenterScreen" Loaded="Window_Loaded"
         Closing="Window_Closing" StateChanged="Window_StateChanged">
@@ -70,12 +71,18 @@
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
                         <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
                             <Button Content="&#x25B6; Play all" Style="{StaticResource AccentButton}" Command="{Binding PlayAllCommand}" Margin="0,0,8,0"/>
                             <Button Content="Add to queue" Command="{Binding AddToQueueCommand}" CommandParameter="{Binding SelectedTrack}" Margin="0,0,8,0"/>
-                            <Button Content="Play similar next" Command="{Binding PlaySimilarNowCommand}"/>
-                            <TextBlock Text="{Binding LibraryCountText}" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="16,0,0,0"/>
+                            <Button Content="Analyse content" Command="{Binding AnalyzeContentCommand}" Margin="0,0,8,0"
+                                    ToolTip="Run the local content analysis (instrument / mood tags) on unanalysed tracks"/>
+                            <Button Content="Stop" Command="{Binding StopAnalysisCommand}" Margin="0,0,8,0"
+                                    Visibility="{Binding IsAnalysing, Converter={StaticResource BoolToVis}}"/>
+                            <CheckBox Content="only unanalysed" IsChecked="{Binding AnalyseOnlyUnanalysed}" Foreground="{StaticResource Text}"
+                                      VerticalAlignment="Center" Margin="0,0,12,0"/>
+                            <TextBlock Text="{Binding LibraryCountText}" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="4,0,0,0"/>
                         </StackPanel>
 
                         <ListView x:Name="LibraryList" Grid.Row="1"
@@ -86,7 +93,6 @@
                                 <ContextMenu>
                                     <MenuItem Header="Play" Command="{Binding PlayTrackCommand}" CommandParameter="{Binding SelectedTrack}"/>
                                     <MenuItem Header="Add to queue" Command="{Binding AddToQueueCommand}" CommandParameter="{Binding SelectedTrack}"/>
-                                    <MenuItem Header="Play similar next" Command="{Binding PlaySimilarNowCommand}"/>
                                     <Separator/>
                                     <MenuItem Header="Add to playlist" ItemsSource="{Binding Playlists}">
                                         <MenuItem.ItemContainerStyle>
@@ -111,6 +117,13 @@
                                             </DataTemplate>
                                         </GridViewColumn.CellTemplate>
                                     </GridViewColumn>
+                                    <GridViewColumn Header="Tags" Width="200">
+                                        <GridViewColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding DisplayTags}" ToolTip="{Binding ContentTags}" TextTrimming="CharacterEllipsis"/>
+                                            </DataTemplate>
+                                        </GridViewColumn.CellTemplate>
+                                    </GridViewColumn>
                                     <GridViewColumn Header="Src" Width="70">
                                         <GridViewColumn.CellTemplate>
                                             <DataTemplate>
@@ -129,6 +142,32 @@
                                 </GridView>
                             </ListView.View>
                         </ListView>
+
+                        <Border Grid.Row="2" Background="{StaticResource Panel}" CornerRadius="6" Padding="10" Margin="0,8,0,0"
+                                Visibility="{Binding HasSelection, Converter={StaticResource BoolToVis}}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="140"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Margin="0,0,10,0" VerticalAlignment="Center">
+                                    <TextBlock Text="Edit selected" FontWeight="SemiBold"/>
+                                    <TextBlock Text="{Binding SelectedTrack.DisplayTitle}" Foreground="{StaticResource Muted}" MaxWidth="170" TextTrimming="CharacterEllipsis"/>
+                                </StackPanel>
+                                <TextBox Grid.Column="1" VerticalAlignment="Center" ToolTip="Genre (editable if the tag is wrong)"
+                                         Text="{Binding EditGenre, UpdateSourceTrigger=PropertyChanged}"/>
+                                <TextBlock Grid.Column="2" Text="Tags" VerticalAlignment="Center" Margin="10,0,6,0" Foreground="{StaticResource Muted}"/>
+                                <TextBox Grid.Column="3" VerticalAlignment="Center" ToolTip="Content tags, separated by ';' (editable)"
+                                         Text="{Binding EditTags, UpdateSourceTrigger=PropertyChanged}"/>
+                                <Button Grid.Column="4" Content="Save" Style="{StaticResource AccentButton}" Margin="8,0,0,0"
+                                        Command="{Binding SaveTrackEditsCommand}"/>
+                                <Button Grid.Column="5" Content="Clear tags" Margin="6,0,0,0" Command="{Binding ClearTrackTagsCommand}"/>
+                            </Grid>
+                        </Border>
                     </Grid>
                 </TabItem>
 
@@ -257,8 +296,8 @@
                             <TextBlock Text="Behaviour" FontWeight="SemiBold" Margin="0,18,0,4"/>
                             <CheckBox Content="Minimise to the tray instead of the taskbar (keeps playing)"
                                       IsChecked="{Binding MinimizeToTray}" Foreground="{StaticResource Text}" Margin="0,4"/>
-                            <CheckBox Content="Closing the window hides it to the tray"
-                                      IsChecked="{Binding MinimizeToTrayOnClose}" Foreground="{StaticResource Text}" Margin="0,4"/>
+                            <TextBlock Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,4,0,0"
+                                       Text="Closing the window (X) exits the player. Use minimise or the tray menu to keep it running."/>
 
                             <TextBlock Text="History retention (days)" FontWeight="SemiBold" Margin="0,18,0,4"/>
                             <TextBox Width="120" HorizontalAlignment="Left" Text="{Binding HistoryRetentionDays, UpdateSourceTrigger=PropertyChanged}"/>
@@ -350,7 +389,7 @@
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                     <CheckBox Content="Shuffle" IsChecked="{Binding Shuffle}" Foreground="{StaticResource Text}" VerticalAlignment="Center" Margin="0,0,12,0"/>
                     <Button Content="{Binding RepeatLabel}" Command="{Binding CycleRepeatCommand}" Margin="0,0,12,0" Width="110"/>
-                    <CheckBox Content="Next song" ToolTip="Auto-play a similar-genre track when the queue ends"
+                    <CheckBox Content="Next song: similar" ToolTip="Auto-play the most similar remaining track when the queue ends (no repeats in a session)"
                               IsChecked="{Binding AutoRecommend}" Foreground="{StaticResource Text}" VerticalAlignment="Center" Margin="0,0,12,0"/>
                     <TextBlock Text="&#x1F50A;" VerticalAlignment="Center" Foreground="{StaticResource Muted}" Margin="0,0,6,0"/>
                     <Slider Width="110" VerticalAlignment="Center" Minimum="0" Maximum="100" Value="{Binding Volume, Mode=TwoWay}"/>
@@ -365,10 +404,12 @@
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <TextBlock Grid.Column="0" Text="{Binding StatusText}" Foreground="{StaticResource Muted}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
                 <TextBlock Grid.Column="1" Text="{Binding PendingClassifyText}" Foreground="{StaticResource Muted}" Margin="12,0" VerticalAlignment="Center"/>
-                <ProgressBar Grid.Column="2" Width="220" Height="8" Maximum="{Binding ProgressMax}" Value="{Binding ProgressValue}"
+                <TextBlock Grid.Column="2" Text="{Binding AnalysisStatusText}" Foreground="{StaticResource Muted}" Margin="12,0" VerticalAlignment="Center"/>
+                <ProgressBar Grid.Column="3" Width="220" Height="8" Maximum="{Binding ProgressMax}" Value="{Binding ProgressValue}"
                              Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}" VerticalAlignment="Center"/>
             </Grid>
         </Border>

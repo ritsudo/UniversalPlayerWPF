@@ -12,6 +12,8 @@ public static class AppPaths
     public const string DatabaseFileName = "universal_player.db";
     public const string SettingsFileName = "universal_player.settings.json";
     public const string LogFileName = "universal_player.log";
+    public const string ModelsFolderName = "models";
+    public const string ContentModelFileName = "content_model.json";
 
     /// <summary>Folder that contains the running executable.</summary>
     public static string ExeDirectory =>
@@ -20,6 +22,10 @@ public static class AppPaths
     public static string DatabasePath => Path.Combine(ExeDirectory, DatabaseFileName);
     public static string SettingsPath => Path.Combine(ExeDirectory, SettingsFileName);
     public static string LogPath => Path.Combine(ExeDirectory, LogFileName);
+
+    /// <summary>Folder next to the executable where local analysis models live.</summary>
+    public static string ModelsDirectory => Path.Combine(ExeDirectory, ModelsFolderName);
+    public static string ContentModelPath => Path.Combine(ModelsDirectory, ContentModelFileName);
 
     /// <summary>
     /// Best guess for the music root when no setting exists yet. If the executable sits in

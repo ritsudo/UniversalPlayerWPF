@@ -15,7 +15,7 @@ public static class CliRunner
     private static extern bool AttachConsole(int dwProcessId);
 
     public static bool IsCliMode(string[] args) =>
-        args.Length > 0 && args[0].ToLowerInvariant() is "--scan" or "--classify" or "--stats" or "--test-audio" or "--test-online" or "--help" or "-h" or "/?";
+        args.Length > 0 && args[0].ToLowerInvariant() is "--scan" or "--classify" or "--analyse" or "--analyze" or "--stats" or "--test-audio" or "--test-online" or "--help" or "-h" or "/?";
 
     public static int Run(string[] args, SettingsStore settingsStore, AppSettings settings)
     {
@@ -49,6 +49,7 @@ public static class CliRunner
                     Console.WriteLine("Universal Player command line:");
                     Console.WriteLine("  --scan      rescan the library and classify new tracks");
                     Console.WriteLine("  --classify  classify tracks that have no genre yet");
+                    Console.WriteLine("  --analyse   run the content analysis on unanalysed tracks (--all to redo, --limit n)");
                     Console.WriteLine("  --stats     show library statistics");
                     Console.WriteLine("  --root <folder>  use this music folder instead of the configured one");
                     Console.WriteLine("  --test-audio --file <path>  play a file for 2 s and report the result");
@@ -98,6 +99,37 @@ public static class CliRunner
                     Console.WriteLine($"after seek to 60s: position={player.Position}");
                     player.Stop();
                     return opened ? 0 : 1;
+                }
+
+                case "--analyse":
+                case "--analyze":
+                {
+                    var dbA = Open(settings);
+                    var tracksA = new TrackRepository(dbA);
+                    var analyzer = new UniversalPlayer.Classification.Content.ContentAnalyzer();
+                    var onlyUnanalysed = !args.Any(a => a.Equals("--all", StringComparison.OrdinalIgnoreCase));
+                    var limitA = ParseIntArg(args, "--limit", int.MaxValue);
+
+                    var allTracks = tracksA.Search(null, null, 200_000);
+                    var todo = (onlyUnanalysed ? allTracks.Where(t => !t.IsAnalysed) : allTracks).Take(limitA).ToList();
+                    if (analyzer.NeedsCalibration)
+                    {
+                        Console.WriteLine("Calibrating the content model on a sample of the collection ...");
+                        analyzer.Calibrate(allTracks.Select(t => t.Path).ToList(), 150, CancellationToken.None);
+                    }
+                    Console.WriteLine($"Analysing {todo.Count} track(s) ...");
+                    var doneA = 0;
+                    foreach (var track in todo)
+                    {
+                        var res = analyzer.Analyze(track.Path, CancellationToken.None);
+                        var tags = UniversalPlayer.Classification.Content.ContentTagComposer.Compose(res?.Tags, track.Year, track.Genre);
+                        tracksA.SetAnalysis(track.Id, tags, res?.Confidence ?? 0);
+                        doneA++;
+                        if (doneA % 5 == 0 || doneA == todo.Count)
+                            Console.WriteLine($"  [{doneA}/{todo.Count}] {track.DisplayArtist} - {track.DisplayTitle} => {tags}");
+                    }
+                    Console.WriteLine($"Done. Analysed {doneA} track(s).");
+                    return 0;
                 }
 
                 case "--test-online":

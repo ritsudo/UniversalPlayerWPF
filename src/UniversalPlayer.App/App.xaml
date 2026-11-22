@@ -12,7 +12,7 @@
             <Color x:Key="PanelAltColor">#FF21252F</Color>
             <Color x:Key="BorderColor">#FF2C313F</Color>
             <Color x:Key="TextColor">#FFE9EBF2</Color>
-            <Color x:Key="MutedColor">#FF98A0B4</Color>
+            <Color x:Key="MutedColor">#FFB3BBCD</Color>
             <Color x:Key="AccentColor">#FF4C8DFF</Color>
             <Color x:Key="AccentHoverColor">#FF6BA0FF</Color>
             <Color x:Key="Accent2Color">#FF8B5CFF</Color>

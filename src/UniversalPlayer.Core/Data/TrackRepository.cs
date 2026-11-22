@@ -11,7 +11,7 @@ public sealed class TrackRepository
     private const string Columns =
         "id, path, file_name, folder, title, artist, album, genre, genre_source, year, track_number, " +
         "duration_ms, bitrate, sample_rate, channels, size_bytes, file_modified_utc, added_utc, last_seen_utc, " +
-        "classified_utc, play_count, last_played_utc, missing";
+        "classified_utc, play_count, last_played_utc, missing, content_tags, analysed_utc, analysis_conf";
 
     private static Track Map(SqliteDataReader r) => new()
     {
@@ -37,7 +37,10 @@ public sealed class TrackRepository
         ClassifiedUtc = DbValue.GetNullableDate(r, 19),
         PlayCount = r.GetInt32(20),
         LastPlayedUtc = DbValue.GetNullableDate(r, 21),
-        Missing = r.GetInt32(22) != 0
+        Missing = r.GetInt32(22) != 0,
+        ContentTags = DbValue.GetStringOrNull(r, 23),
+        AnalysedUtc = DbValue.GetNullableDate(r, 24),
+        AnalysisConfidence = r.IsDBNull(25) ? null : r.GetDouble(25)
     };
 
     private const string UpsertSql = """
@@ -291,5 +294,87 @@ public sealed class TrackRepository
             "UPDATE tracks SET genre = NULL, genre_source = 'None', classified_utc = NULL WHERE genre_source = 'LocalModel';" +
             "UPDATE artists SET genre = NULL, genre_source = 'None' WHERE genre_source = 'LocalModel';";
         return cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>Stores the content-analysis result (and marks the track as analysed).</summary>
+    public void SetAnalysis(long id, string? tags, double confidence)
+    {
+        using var c = _db.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText =
+            "UPDATE tracks SET content_tags = @t, analysis_conf = @c, analysed_utc = @u WHERE id = @id;";
+        cmd.Parameters.AddWithValue("@t", (object?)Nullify(tags) ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@c", confidence);
+        cmd.Parameters.AddWithValue("@u", DbValue.ToDb(DateTime.UtcNow));
+        cmd.Parameters.AddWithValue("@id", id);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>Manual edit of the content tags (keeps the analysed marker).</summary>
+    public void UpdateContentTags(long id, string? tags)
+    {
+        using var c = _db.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = "UPDATE tracks SET content_tags = @t WHERE id = @id;";
+        cmd.Parameters.AddWithValue("@t", (object?)Nullify(tags) ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@id", id);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>Manual edit of the genre.</summary>
+    public void SetGenreManual(long id, string? genre)
+    {
+        using var c = _db.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = "UPDATE tracks SET genre = @g, genre_source = @s, classified_utc = @u WHERE id = @id;";
+        cmd.Parameters.AddWithValue("@g", (object?)Nullify(genre) ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@s", GenreSource.Manual.ToString());
+        cmd.Parameters.AddWithValue("@u", DbValue.ToDb(DateTime.UtcNow));
+        cmd.Parameters.AddWithValue("@id", id);
+        cmd.ExecuteNonQuery();
+    }
+
+    public List<Track> GetUnanalysed(int limit)
+    {
+        using var c = _db.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = $"SELECT {Columns} FROM tracks WHERE missing = 0 AND analysed_utc IS NULL ORDER BY id LIMIT @lim;";
+        cmd.Parameters.AddWithValue("@lim", limit);
+        var list = new List<Track>();
+        using var r = cmd.ExecuteReader();
+        while (r.Read()) list.Add(Map(r));
+        return list;
+    }
+
+    public int CountUnanalysed()
+    {
+        using var c = _db.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM tracks WHERE missing = 0 AND analysed_utc IS NULL;";
+        return Convert.ToInt32(cmd.ExecuteScalar());
+    }
+
+    public int CountAnalysed()
+    {
+        using var c = _db.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM tracks WHERE missing = 0 AND analysed_utc IS NOT NULL;";
+        return Convert.ToInt32(cmd.ExecuteScalar());
+    }
+
+    /// <summary>Tag histogram across the library (tag -> number of tracks).</summary>
+    public Dictionary<string, int> TagHistogram()
+    {
+        using var c = _db.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = "SELECT content_tags FROM tracks WHERE missing = 0 AND content_tags IS NOT NULL;";
+        var histogram = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            foreach (var tag in r.GetString(0).Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                histogram[tag] = histogram.GetValueOrDefault(tag) + 1;
+        }
+        return histogram;
     }
 }

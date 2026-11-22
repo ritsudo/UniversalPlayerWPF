@@ -24,7 +24,8 @@ public partial class MainViewModel : ObservableObject
 
     private readonly DispatcherTimer _searchDebounce;
     private readonly DispatcherTimer _positionTimer;
-    private readonly List<string> _recentPaths = new();
+    private readonly HashSet<string> _sessionPlayed = new(StringComparer.OrdinalIgnoreCase);
+    private CancellationTokenSource? _analysisCts;
     private int _currentIndex = -1;
     private int _historyTouchCounter;
     private bool _suppressPositionUpdate;
@@ -78,6 +79,13 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private Playlist? _selectedPlaylist;
     [ObservableProperty] private Artist? _selectedArtist;
     [ObservableProperty] private string _newPlaylistName = string.Empty;
+
+    [ObservableProperty] private bool _isAnalysing;
+    [ObservableProperty] private bool _analyseOnlyUnanalysed = true;
+    [ObservableProperty] private string _analysisStatusText = string.Empty;
+    [ObservableProperty] private bool _hasSelection;
+    [ObservableProperty] private string _editGenre = string.Empty;
+    [ObservableProperty] private string _editTags = string.Empty;
 
     public string RepeatLabel => RepeatMode switch { 1 => "Repeat one", 2 => "Repeat all", _ => "Repeat off" };
 
@@ -148,6 +156,7 @@ public partial class MainViewModel : ObservableObject
         RefreshPlaylists();
         RefreshHistory();
         RefreshPending();
+        RefreshAnalysisStatus();
     }
 
     private void Tick()
@@ -179,7 +188,7 @@ public partial class MainViewModel : ObservableObject
     private void RefreshLibrary()
     {
         var genre = GenreFilter == "All" ? null : GenreFilter;
-        var list = _tracks.Search(SearchText, genre, 5000);
+        var list = _tracks.Search(SearchText, genre, 20000);
         Library.Clear();
         foreach (var t in list) Library.Add(t);
         LibraryCountText = $"{list.Count} track(s)";
@@ -223,6 +232,13 @@ public partial class MainViewModel : ObservableObject
         PendingClassifyText = n == 0 ? $"{total} tracks, all classified" : $"{n} of {total} track(s) unclassified";
     }
 
+    private void RefreshAnalysisStatus()
+    {
+        var analysed = _tracks.CountAnalysed();
+        var pending = _tracks.CountUnanalysed();
+        AnalysisStatusText = $"{analysed} analysed, {pending} unanalysed";
+    }
+
     partial void OnSearchTextChanged(string value)
     {
         _searchDebounce.Stop();
@@ -243,11 +259,17 @@ public partial class MainViewModel : ObservableObject
 
     partial void OnSelectedPlaylistChanged(Playlist? value) => ShowHistoryForPlaylist(value);
 
+    partial void OnSelectedTrackChanged(Track? value)
+    {
+        EditGenre = value?.Genre ?? string.Empty;
+        EditTags = value?.ContentTags ?? string.Empty;
+        HasSelection = value is not null;
+    }
+
     public void SaveSettings()
     {
         Settings.LibraryRoot = LibraryRoot;
         Settings.MinimizeToTray = MinimizeToTray;
-        Settings.MinimizeToTrayOnClose = MinimizeToTrayOnClose;
         Settings.OnlineClassification = OnlineClassification;
         Settings.LocalModelFallback = LocalModelFallback;
         _settingsStore.Save(Settings);
@@ -277,12 +299,6 @@ public partial class MainViewModel : ObservableObject
     {
         get => Settings.MinimizeToTray;
         set { if (Settings.MinimizeToTray != value) { Settings.MinimizeToTray = value; OnPropertyChanged(); SaveSettings(); } }
-    }
-
-    public bool MinimizeToTrayOnClose
-    {
-        get => Settings.MinimizeToTrayOnClose;
-        set { if (Settings.MinimizeToTrayOnClose != value) { Settings.MinimizeToTrayOnClose = value; OnPropertyChanged(); SaveSettings(); } }
     }
 
     public int HistoryRetentionDays
@@ -357,6 +373,65 @@ public partial class MainViewModel : ObservableObject
         return _libraryService.ClassifyPendingAsync(options, ct);
     }
 
+    /// <summary>Start the experimental content analysis (stoppable).</summary>
+    [RelayCommand]
+    private async Task AnalyzeContentAsync()
+    {
+        if (IsBusy || IsAnalysing) return;
+        _analysisCts = new CancellationTokenSource();
+        IsAnalysing = true;
+        IsBusy = true;
+        IsProgressIndeterminate = false;
+        try
+        {
+            await _libraryService.AnalyzeContentAsync(AnalyseOnlyUnanalysed, _analysisCts.Token);
+            RefreshLibrary();
+            RefreshAnalysisStatus();
+        }
+        catch (OperationCanceledException)
+        {
+            StatusText = "Content analysis stopped.";
+            RefreshAnalysisStatus();
+        }
+        catch (Exception ex)
+        {
+            StatusText = "Analysis failed: " + ex.Message;
+        }
+        finally
+        {
+            IsAnalysing = false;
+            IsBusy = false;
+            ProgressValue = 0;
+            _analysisCts?.Dispose();
+            _analysisCts = null;
+        }
+    }
+
+    [RelayCommand]
+    private void StopAnalysis()
+    {
+        _analysisCts?.Cancel();
+        StatusText = "Stopping analysis ...";
+    }
+
+    [RelayCommand]
+    private void SaveTrackEdits()
+    {
+        if (SelectedTrack is null) return;
+        var id = SelectedTrack.Id;
+        var title = SelectedTrack.DisplayTitle;
+        _tracks.SetGenreManual(id, EditGenre);
+        _tracks.UpdateContentTags(id, EditTags);
+        RefreshGenres();
+        RefreshLibrary();
+        RefreshAnalysisStatus();
+        SelectedTrack = Library.FirstOrDefault(t => t.Id == id);
+        StatusText = $"Saved details for '{title}'.";
+    }
+
+    [RelayCommand]
+    private void ClearTrackTags() => EditTags = string.Empty;
+
     [RelayCommand]
     private void PlayPause()
     {
@@ -404,19 +479,6 @@ public partial class MainViewModel : ObservableObject
         if (track is null) return;
         var index = Library.IndexOf(track);
         PlayFromList(Library, Math.Max(0, index));
-    }
-
-    [RelayCommand]
-    private void PlaySimilarNow()
-    {
-        var rec = _recommendation.RecommendNext(CurrentTrack, _recentPaths);
-        if (rec is null)
-        {
-            StatusText = "No recommendation available yet.";
-            return;
-        }
-        Queue.Add(rec);
-        PlayIndex(Queue.Count - 1);
     }
 
     [RelayCommand]
@@ -567,8 +629,7 @@ public partial class MainViewModel : ObservableObject
         track.PlayCount++;
         track.LastPlayedUtc = DateTime.UtcNow;
 
-        _recentPaths.Add(track.Path);
-        if (_recentPaths.Count > 25) _recentPaths.RemoveAt(0);
+        _sessionPlayed.Add(track.Path);
 
         StatusText = $"Playing: {track.DisplayTitle} - {track.DisplayArtist}";
         CurrentTrackChanged?.Invoke();
@@ -617,11 +678,11 @@ public partial class MainViewModel : ObservableObject
 
         if (auto && AutoRecommend)
         {
-            var rec = _recommendation.RecommendNext(CurrentTrack, _recentPaths);
-            if (rec is not null)
+            var pick = _recommendation.RecommendNext(CurrentTrack, _sessionPlayed);
+            if (pick is not null)
             {
-                Queue.Add(rec);
-                StatusText = $"Next song recommended by genre ({rec.DisplayGenre}): {rec.DisplayTitle}";
+                Queue.Add(pick.Track);
+                StatusText = $"Next recommended ({pick.Reason}): {pick.Track.DisplayTitle}";
                 PlayIndex(Queue.Count - 1);
                 return;
             }
