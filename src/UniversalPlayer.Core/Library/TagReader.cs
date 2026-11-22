@@ -1,5 +1,6 @@
 using UniversalPlayer.Core.Genres;
 using UniversalPlayer.Core.Models;
+using UniversalPlayer.Core.Text;
 
 namespace UniversalPlayer.Core.Library;
 
@@ -76,6 +77,12 @@ public static class TagReader
             track.Artist = null;
         if (string.IsNullOrWhiteSpace(track.Album))
             track.Album = null;
+
+        // Repair tags (and names) that were saved with the wrong code page.
+        track.Title = TextRepair.FixOrKeep(track.Title);
+        if (track.Artist is not null) track.Artist = TextRepair.FixOrKeep(track.Artist);
+        if (track.Album is not null) track.Album = TextRepair.FixOrKeep(track.Album);
+        if (track.Genre is not null) track.Genre = TextRepair.FixOrKeep(track.Genre);
 
         // Video rips and many downloads carry no tags at all; "Artist - Title" in the file
         // name is a good enough hint for the online classifier.

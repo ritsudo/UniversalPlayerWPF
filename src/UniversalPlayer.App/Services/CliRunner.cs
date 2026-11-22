@@ -15,7 +15,7 @@ public static class CliRunner
     private static extern bool AttachConsole(int dwProcessId);
 
     public static bool IsCliMode(string[] args) =>
-        args.Length > 0 && args[0].ToLowerInvariant() is "--scan" or "--classify" or "--analyse" or "--analyze" or "--stats" or "--test-audio" or "--test-online" or "--help" or "-h" or "/?";
+        args.Length > 0 && args[0].ToLowerInvariant() is "--scan" or "--classify" or "--analyse" or "--analyze" or "--fix-names" or "--stats" or "--test-audio" or "--test-online" or "--help" or "-h" or "/?";
 
     public static int Run(string[] args, SettingsStore settingsStore, AppSettings settings)
     {
@@ -50,6 +50,7 @@ public static class CliRunner
                     Console.WriteLine("  --scan      rescan the library and classify new tracks");
                     Console.WriteLine("  --classify  classify tracks that have no genre yet");
                     Console.WriteLine("  --analyse   run the content analysis on unanalysed tracks (--all to redo, --limit n)");
+                    Console.WriteLine("  --fix-names repair track names/tags stored with the wrong code page");
                     Console.WriteLine("  --stats     show library statistics");
                     Console.WriteLine("  --root <folder>  use this music folder instead of the configured one");
                     Console.WriteLine("  --test-audio --file <path>  play a file for 2 s and report the result");
@@ -99,6 +100,15 @@ public static class CliRunner
                     Console.WriteLine($"after seek to 60s: position={player.Position}");
                     player.Stop();
                     return opened ? 0 : 1;
+                }
+
+                case "--fix-names":
+                {
+                    var dbF = Open(settings);
+                    var tracksF = new TrackRepository(dbF);
+                    var fixedCount = tracksF.RepairTextFields();
+                    Console.WriteLine($"Repaired text in {fixedCount} track(s).");
+                    return 0;
                 }
 
                 case "--analyse":

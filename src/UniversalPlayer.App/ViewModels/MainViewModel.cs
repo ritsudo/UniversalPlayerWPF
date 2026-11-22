@@ -143,9 +143,29 @@ public partial class MainViewModel : ObservableObject
     public void Load()
     {
         var purged = _history.PurgeOlderThan(Settings.HistoryRetentionDays);
+        _history.MarkSessionStart();
         RefreshAll();
         if (purged > 0)
             StatusText = $"Removed {purged} history entries older than {Settings.HistoryRetentionDays} days.";
+
+        // Repair tags that were stored with the wrong code page (Cyrillic shown as "Ãîðîä").
+        Task.Run(() =>
+        {
+            try
+            {
+                var fixedCount = _tracks.RepairTextFields();
+                if (fixedCount > 0)
+                    OnUi(() =>
+                    {
+                        RefreshLibrary();
+                        StatusText = $"Repaired {fixedCount} track name(s) with broken Cyrillic encoding.";
+                    });
+            }
+            catch
+            {
+                // repair is best effort
+            }
+        });
     }
 
     public void RefreshAll()
@@ -454,7 +474,14 @@ public partial class MainViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private void Next() => Advance(auto: false);
+    private void Next()
+    {
+        if (Queue.Count == 0) return;
+        // With "Next song: similar" on, the button forces the same similar-track choice
+        // the player would make when the song ends; otherwise it is a normal queue step.
+        if (AutoRecommend && TryPlaySimilar()) return;
+        Advance(auto: false);
+    }
 
     [RelayCommand]
     private void Previous()
@@ -657,17 +684,8 @@ public partial class MainViewModel : ObservableObject
 
         // "Next song: similar" - pick the most similar track still unplayed this session,
         // so a session turns into thematic runs (piano -> piano, classical -> classical, ...).
-        if (auto && AutoRecommend)
-        {
-            var pick = _recommendation.RecommendNext(CurrentTrack, _sessionPlayed);
-            if (pick is not null)
-            {
-                Queue.Add(pick.Track);
-                StatusText = $"Next similar ({pick.Reason}): {pick.Track.DisplayTitle}";
-                PlayIndex(Queue.Count - 1);
-                return;
-            }
-        }
+        if (auto && AutoRecommend && TryPlaySimilar())
+            return;
 
         int next;
         if (Shuffle && Queue.Count > 1)
@@ -691,6 +709,18 @@ public partial class MainViewModel : ObservableObject
         }
 
         Stop();
+    }
+
+    /// <summary>Plays the most similar unplayed track; returns false when there is none.</summary>
+    private bool TryPlaySimilar()
+    {
+        var pick = _recommendation.RecommendNext(CurrentTrack, _sessionPlayed);
+        if (pick is null) return false;
+
+        Queue.Add(pick.Track);
+        StatusText = $"Next similar ({pick.Reason}): {pick.Track.DisplayTitle}";
+        PlayIndex(Queue.Count - 1);
+        return true;
     }
 
     public void ShowHistoryForPlaylist(Playlist? playlist)

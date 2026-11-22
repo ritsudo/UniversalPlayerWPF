@@ -60,25 +60,31 @@ public sealed class Database
     /// <summary>Adds columns introduced after the first release, so an existing database keeps working.</summary>
     private static void EnsureColumns(SqliteConnection conn)
     {
-        var existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        using (var info = conn.CreateCommand())
+        var additions = new (string Table, string Name, string Ddl)[]
         {
-            info.CommandText = "PRAGMA table_info(tracks);";
-            using var reader = info.ExecuteReader();
-            while (reader.Read())
-                existing.Add(reader.GetString(1));
-        }
-
-        var additions = new (string Name, string Ddl)[]
-        {
-            ("content_tags", "ALTER TABLE tracks ADD COLUMN content_tags TEXT;"),
-            ("analysed_utc", "ALTER TABLE tracks ADD COLUMN analysed_utc TEXT;"),
-            ("analysis_conf", "ALTER TABLE tracks ADD COLUMN analysis_conf REAL;")
+            ("tracks", "content_tags", "ALTER TABLE tracks ADD COLUMN content_tags TEXT;"),
+            ("tracks", "analysed_utc", "ALTER TABLE tracks ADD COLUMN analysed_utc TEXT;"),
+            ("tracks", "analysis_conf", "ALTER TABLE tracks ADD COLUMN analysis_conf REAL;"),
+            ("history", "kind", "ALTER TABLE history ADD COLUMN kind INTEGER NOT NULL DEFAULT 0;")
         };
 
-        foreach (var (name, ddl) in additions)
+        var existing = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var table in additions.Select(a => a.Table).Distinct())
         {
-            if (existing.Contains(name)) continue;
+            var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            using (var info = conn.CreateCommand())
+            {
+                info.CommandText = $"PRAGMA table_info({table});";
+                using var reader = info.ExecuteReader();
+                while (reader.Read())
+                    columns.Add(reader.GetString(1));
+            }
+            existing[table] = columns;
+        }
+
+        foreach (var (table, name, ddl) in additions)
+        {
+            if (existing[table].Contains(name)) continue;
             using var alter = conn.CreateCommand();
             alter.CommandText = ddl;
             alter.ExecuteNonQuery();
@@ -136,7 +142,8 @@ public sealed class Database
             artist         TEXT,
             genre          TEXT,
             started_utc    TEXT NOT NULL,
-            played_seconds INTEGER NOT NULL DEFAULT 0
+            played_seconds INTEGER NOT NULL DEFAULT 0,
+            kind           INTEGER NOT NULL DEFAULT 0
         );
         CREATE INDEX IF NOT EXISTS ix_history_started ON history(started_utc DESC);
 

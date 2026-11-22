@@ -37,6 +37,21 @@ public sealed class HistoryRepository
         cmd.ExecuteNonQuery();
     }
 
+    /// <summary>Inserts a divider row marking the start of a new listening session.</summary>
+    public long AddSessionStart(DateTime startedUtc)
+    {
+        using var c = _db.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO history(path, title, started_utc, played_seconds, kind)
+            VALUES('', @title, @started, 0, 1)
+            RETURNING id;
+            """;
+        cmd.Parameters.AddWithValue("@title", "new listening session");
+        cmd.Parameters.AddWithValue("@started", DbValue.ToDb(startedUtc));
+        return (long)(cmd.ExecuteScalar() ?? 0L);
+    }
+
     /// <summary>Deletes entries older than the cutoff (default retention is one month).</summary>
     public int PurgeOlderThan(DateTime cutoffUtc)
     {
@@ -60,7 +75,7 @@ public sealed class HistoryRepository
         using var c = _db.Open();
         using var cmd = c.CreateCommand();
         cmd.CommandText = """
-            SELECT id, track_id, path, title, artist, genre, started_utc, played_seconds
+            SELECT id, track_id, path, title, artist, genre, started_utc, played_seconds, kind
             FROM history ORDER BY started_utc DESC LIMIT @lim;
             """;
         cmd.Parameters.AddWithValue("@lim", limit);
@@ -77,7 +92,8 @@ public sealed class HistoryRepository
                 Artist = DbValue.GetStringOrNull(r, 4),
                 Genre = DbValue.GetStringOrNull(r, 5),
                 StartedUtc = DbValue.GetDate(r, 6),
-                PlayedSeconds = r.GetInt32(7)
+                PlayedSeconds = r.GetInt32(7),
+                Kind = r.GetInt32(8)
             });
         }
         return list;

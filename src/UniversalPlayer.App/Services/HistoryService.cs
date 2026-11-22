@@ -17,6 +17,9 @@ public sealed class HistoryService
 
     public HistoryService(HistoryRepository history) => _history = history;
 
+    /// <summary>Marks the start of a new listening session (called once when the program starts).</summary>
+    public void MarkSessionStart() => _history.AddSessionStart(DateTime.UtcNow);
+
     public void Start(Track track)
     {
         End();

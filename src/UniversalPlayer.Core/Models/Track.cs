@@ -71,6 +71,9 @@ public sealed class Artist
 /// <summary>One listening session entry.</summary>
 public sealed class HistoryEntry
 {
+    /// <summary>0 = a played track, 1 = a "new session" divider.</summary>
+    public int Kind { get; set; }
+
     public long Id { get; set; }
     public long? TrackId { get; set; }
     public string Path { get; set; } = string.Empty;
@@ -79,6 +82,14 @@ public sealed class HistoryEntry
     public string? Genre { get; set; }
     public DateTime StartedUtc { get; set; }
     public int PlayedSeconds { get; set; }
+
+    public bool IsSessionStart => Kind == 1;
+    public string DisplayTitle => IsSessionStart
+        ? "-- new listening session --"
+        : (string.IsNullOrWhiteSpace(Title) ? System.IO.Path.GetFileName(Path) : Title);
+    public string DisplayArtist => IsSessionStart ? string.Empty : Artist ?? "Unknown artist";
+    public string DisplayGenre => IsSessionStart ? string.Empty : Genre ?? "-";
+    public string DisplayPlayed => IsSessionStart || PlayedSeconds <= 0 ? string.Empty : PlayedSeconds.ToString();
 }
 
 public sealed class Playlist

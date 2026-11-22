@@ -235,6 +235,16 @@
                                        Foreground="{StaticResource Muted}" VerticalAlignment="Center"/>
                         </StackPanel>
                         <ListView Grid.Row="1" ItemsSource="{Binding History}">
+                            <ListView.ItemContainerStyle>
+                                <Style TargetType="ListViewItem" BasedOn="{StaticResource {x:Type ListViewItem}}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsSessionStart}" Value="True">
+                                            <Setter Property="Foreground" Value="{StaticResource Accent}"/>
+                                            <Setter Property="FontWeight" Value="SemiBold"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </ListView.ItemContainerStyle>
                             <ListView.View>
                                 <GridView>
                                     <GridViewColumn Header="When" Width="150">
@@ -244,10 +254,10 @@
                                             </DataTemplate>
                                         </GridViewColumn.CellTemplate>
                                     </GridViewColumn>
-                                    <GridViewColumn Header="Title" Width="280" DisplayMemberBinding="{Binding Title}"/>
-                                    <GridViewColumn Header="Artist" Width="180" DisplayMemberBinding="{Binding Artist}"/>
-                                    <GridViewColumn Header="Genre" Width="120" DisplayMemberBinding="{Binding Genre}"/>
-                                    <GridViewColumn Header="Played (s)" Width="80" DisplayMemberBinding="{Binding PlayedSeconds}"/>
+                                    <GridViewColumn Header="Title" Width="330" DisplayMemberBinding="{Binding DisplayTitle}"/>
+                                    <GridViewColumn Header="Artist" Width="180" DisplayMemberBinding="{Binding DisplayArtist}"/>
+                                    <GridViewColumn Header="Genre" Width="120" DisplayMemberBinding="{Binding DisplayGenre}"/>
+                                    <GridViewColumn Header="Played (s)" Width="80" DisplayMemberBinding="{Binding DisplayPlayed}"/>
                                 </GridView>
                             </ListView.View>
                         </ListView>

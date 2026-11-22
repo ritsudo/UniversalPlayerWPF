@@ -377,4 +377,73 @@ public sealed class TrackRepository
         }
         return histogram;
     }
+
+    /// <summary>
+    /// Scans every stored text field for text saved with the wrong code page (Cyrillic
+    /// tags shown as "Êîðîëü è Øóò") and repairs it. Returns the number of changed tracks.
+    /// </summary>
+    public int RepairTextFields()
+    {
+        using var c = _db.Open();
+        using var tx = c.BeginTransaction();
+
+        var updates = new List<(long Id, string? Title, string? Artist, string? Album, string? Genre, string FileName, string SearchText)>();
+
+        using (var read = c.CreateCommand())
+        {
+            read.Transaction = tx;
+            read.CommandText = "SELECT id, title, artist, album, genre, file_name, folder FROM tracks;";
+            using var r = read.ExecuteReader();
+            while (r.Read())
+            {
+                var id = r.GetInt64(0);
+                var title = DbValue.GetStringOrNull(r, 1);
+                var artist = DbValue.GetStringOrNull(r, 2);
+                var album = DbValue.GetStringOrNull(r, 3);
+                var genre = DbValue.GetStringOrNull(r, 4);
+                var fileName = r.GetString(5);
+                var folder = r.GetString(6);
+
+                var fixedTitle = Text.TextRepair.Fix(title);
+                var fixedArtist = Text.TextRepair.Fix(artist);
+                var fixedAlbum = Text.TextRepair.Fix(album);
+                var fixedGenre = Text.TextRepair.Fix(genre);
+                var fixedFileName = Text.TextRepair.Fix(fileName);
+
+                if (fixedTitle is null && fixedArtist is null && fixedAlbum is null &&
+                    fixedGenre is null && fixedFileName is null)
+                    continue;
+
+                var newTitle = fixedTitle ?? title;
+                var newArtist = fixedArtist ?? artist;
+                var newAlbum = fixedAlbum ?? album;
+                var newGenre = fixedGenre ?? genre;
+                var newFileName = fixedFileName ?? fileName;
+
+                var search = string.Join('\n', new[] { newTitle, newArtist, newAlbum, newGenre, newFileName, folder }
+                    .Where(s => !string.IsNullOrWhiteSpace(s))).ToLowerInvariant();
+
+                updates.Add((id, newTitle, newArtist, newAlbum, newGenre, newFileName, search));
+            }
+        }
+
+        foreach (var u in updates)
+        {
+            using var cmd = c.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText =
+                "UPDATE tracks SET title = @t, artist = @a, album = @al, genre = @g, file_name = @f, search_text = @s WHERE id = @id;";
+            cmd.Parameters.AddWithValue("@t", (object?)u.Title ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@a", (object?)u.Artist ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@al", (object?)u.Album ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@g", (object?)u.Genre ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@f", u.FileName);
+            cmd.Parameters.AddWithValue("@s", u.SearchText);
+            cmd.Parameters.AddWithValue("@id", u.Id);
+            cmd.ExecuteNonQuery();
+        }
+
+        tx.Commit();
+        return updates.Count;
+    }
 }
