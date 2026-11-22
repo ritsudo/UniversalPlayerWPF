@@ -655,6 +655,20 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
+        // "Next song: similar" - pick the most similar track still unplayed this session,
+        // so a session turns into thematic runs (piano -> piano, classical -> classical, ...).
+        if (auto && AutoRecommend)
+        {
+            var pick = _recommendation.RecommendNext(CurrentTrack, _sessionPlayed);
+            if (pick is not null)
+            {
+                Queue.Add(pick.Track);
+                StatusText = $"Next similar ({pick.Reason}): {pick.Track.DisplayTitle}";
+                PlayIndex(Queue.Count - 1);
+                return;
+            }
+        }
+
         int next;
         if (Shuffle && Queue.Count > 1)
         {
@@ -674,18 +688,6 @@ public partial class MainViewModel : ObservableObject
         {
             PlayIndex(next);
             return;
-        }
-
-        if (auto && AutoRecommend)
-        {
-            var pick = _recommendation.RecommendNext(CurrentTrack, _sessionPlayed);
-            if (pick is not null)
-            {
-                Queue.Add(pick.Track);
-                StatusText = $"Next recommended ({pick.Reason}): {pick.Track.DisplayTitle}";
-                PlayIndex(Queue.Count - 1);
-                return;
-            }
         }
 
         Stop();
