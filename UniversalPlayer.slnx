@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/UniversalPlayer.App/UniversalPlayer.App.csproj" />
+    <Project Path="src/UniversalPlayer.Classification/UniversalPlayer.Classification.csproj" />
+    <Project Path="src/UniversalPlayer.Core/UniversalPlayer.Core.csproj" />
+  </Folder>
+</Solution>
