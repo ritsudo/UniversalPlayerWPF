@@ -52,6 +52,7 @@ public partial class App : Application
 
         var db = new Database(AppPaths.DatabasePath);
         db.Initialize();
+        LibraryRelocator.Ensure(db, settings.LibraryRoot);
 
         var tracks = new TrackRepository(db);
         var artists = new ArtistRepository(db);

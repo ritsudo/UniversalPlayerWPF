@@ -691,36 +691,55 @@ public partial class MainViewModel : ObservableObject
 
     private void PlayIndex(int index)
     {
-        if (index < 0 || index >= Queue.Count) return;
-        _currentIndex = index;
-        var track = Queue[index];
-
-        var gain = NormalizeVolume ? ResolveGain(track) : 1.0;
-        if (!_player.PlayFile(track.Path, gain))
+        if (Queue.Count == 0)
         {
-            StatusText = $"Cannot play: {track.FileName}";
-            _player.Stop();
-            Advance(auto: true);
+            Stop();
             return;
         }
 
-        _history.End();
-        CurrentTrack = track;
-        IsPlaying = true;
-        DurationSeconds = _player.Duration.TotalSeconds;
-        PositionSeconds = 0;
+        // Step through the queue instead of recursing when a file cannot be opened: a moved
+        // library (or a corrupt file) used to bounce between PlayIndex and the "similar track"
+        // recommender forever and overflow the stack. Now a bad run is skipped in a bounded
+        // loop and the player just stops when nothing is playable.
+        var attempts = 0;
+        while (index >= 0 && index < Queue.Count && attempts < Queue.Count)
+        {
+            var track = Queue[index];
+            var gain = NormalizeVolume ? ResolveGain(track) : 1.0;
 
-        _history.Start(track);
-        _tracks.IncrementPlay(track.Id);
-        track.PlayCount++;
-        track.LastPlayedUtc = DateTime.UtcNow;
+            if (_player.PlayFile(track.Path, gain))
+            {
+                _currentIndex = index;
+                _history.End();
+                CurrentTrack = track;
+                IsPlaying = true;
+                DurationSeconds = _player.Duration.TotalSeconds;
+                PositionSeconds = 0;
 
-        _sessionPlayed.Add(track.Path);
+                _history.Start(track);
+                _tracks.IncrementPlay(track.Id);
+                track.PlayCount++;
+                track.LastPlayedUtc = DateTime.UtcNow;
 
-        StatusText = $"Playing: {track.DisplayTitle} - {track.DisplayArtist}";
-        CurrentTrackChanged?.Invoke();
-        RefreshHistory();
-        PrewarmNextGain();
+                _sessionPlayed.Add(track.Path);
+
+                StatusText = $"Playing: {track.DisplayTitle} - {track.DisplayArtist}";
+                CurrentTrackChanged?.Invoke();
+                RefreshHistory();
+                PrewarmNextGain();
+                return;
+            }
+
+            StatusText = $"Cannot play: {track.FileName}";
+            _sessionPlayed.Add(track.Path);
+            attempts++;
+            index = index + 1 < Queue.Count ? index + 1 : (RepeatMode == 2 ? 0 : -1);
+        }
+
+        _player.Stop();
+        Stop();
+        if (Queue.Count > 0)
+            StatusText = "No playable tracks in the queue.";
     }
 
     /// <summary>Gain for the track: stored value when known, otherwise measured once and remembered.</summary>

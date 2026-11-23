@@ -28,6 +28,44 @@ public static class AppPaths
     public static string ContentModelPath => Path.Combine(ModelsDirectory, ContentModelFileName);
 
     /// <summary>
+    /// Turns an absolute library root into a form that keeps working after the whole bundle
+    /// folder (music + player) is moved: when the root is the executable's folder or one of
+    /// its ancestors - the normal layout is &lt;root&gt;\UniversalPlayer\UniversalPlayer.exe -
+    /// it is stored relative to the executable; any other location stays absolute.
+    /// </summary>
+    public static string MakePortableRoot(string absoluteRoot)
+    {
+        if (string.IsNullOrWhiteSpace(absoluteRoot))
+            return string.Empty;
+        try
+        {
+            var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(absoluteRoot));
+            var relative = Path.GetRelativePath(ExeDirectory, root);
+            return Path.IsPathRooted(relative) ? root : relative;
+        }
+        catch
+        {
+            return absoluteRoot;
+        }
+    }
+
+    /// <summary>Resolves a stored (relative or absolute) library root back to an absolute path.</summary>
+    public static string ResolveRoot(string? stored)
+    {
+        if (string.IsNullOrWhiteSpace(stored))
+            return DetectDefaultLibraryRoot();
+        try
+        {
+            var combined = Path.IsPathRooted(stored) ? stored! : Path.Combine(ExeDirectory, stored);
+            return Path.TrimEndingDirectorySeparator(Path.GetFullPath(combined));
+        }
+        catch
+        {
+            return stored!;
+        }
+    }
+
+    /// <summary>
     /// Best guess for the music root when no setting exists yet. If the executable sits in
     /// the music folder itself that folder is used; if it sits in a sub-folder (e.g. the
     /// published UniversalPlayer folder) the closest ancestor that actually contains music

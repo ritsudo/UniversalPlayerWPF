@@ -336,6 +336,7 @@ public static class CliRunner
     {
         var db = new Database(AppPaths.DatabasePath);
         db.Initialize();
+        LibraryRelocator.Ensure(db, settings.LibraryRoot);
         return db;
     }
 }
