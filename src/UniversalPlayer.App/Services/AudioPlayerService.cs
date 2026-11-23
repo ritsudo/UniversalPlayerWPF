@@ -49,7 +49,7 @@ public sealed class AudioPlayerService : IDisposable
             {
                 _reader = OpenReader(path);
                 _volume = new VolumeSampleProvider(_reader.ToSampleProvider()) { Volume = _pendingVolume };
-                _output = new WaveOutEvent { DesiredLatency = 200 };
+                _output = new WaveOutEvent { DesiredLatency = 300, NumberOfBuffers = 3 };
                 _output.PlaybackStopped += OnPlaybackStopped;
                 _output.Init(_volume);
                 _output.Play();

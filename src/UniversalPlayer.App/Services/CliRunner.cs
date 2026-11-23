@@ -1,3 +1,4 @@
+using System.IO;
 using System.Runtime.InteropServices;
 using UniversalPlayer.Classification;
 using UniversalPlayer.Core.Data;
@@ -15,7 +16,7 @@ public static class CliRunner
     private static extern bool AttachConsole(int dwProcessId);
 
     public static bool IsCliMode(string[] args) =>
-        args.Length > 0 && args[0].ToLowerInvariant() is "--scan" or "--classify" or "--analyse" or "--analyze" or "--fix-names" or "--stats" or "--test-audio" or "--test-online" or "--help" or "-h" or "/?";
+        args.Length > 0 && args[0].ToLowerInvariant() is "--scan" or "--classify" or "--analyse" or "--analyze" or "--fix-names" or "--dump-audio" or "--stats" or "--test-audio" or "--test-online" or "--help" or "-h" or "/?";
 
     public static int Run(string[] args, SettingsStore settingsStore, AppSettings settings)
     {
@@ -51,6 +52,7 @@ public static class CliRunner
                     Console.WriteLine("  --classify  classify tracks that have no genre yet");
                     Console.WriteLine("  --analyse   run the content analysis on unanalysed tracks (--all to redo, --limit n)");
                     Console.WriteLine("  --fix-names repair track names/tags stored with the wrong code page");
+                    Console.WriteLine("  --dump-audio --file <path> [--seconds n] [--seek s] [--out wav]  decode to a wav (diagnostics)");
                     Console.WriteLine("  --stats     show library statistics");
                     Console.WriteLine("  --root <folder>  use this music folder instead of the configured one");
                     Console.WriteLine("  --test-audio --file <path>  play a file for 2 s and report the result");
@@ -100,6 +102,44 @@ public static class CliRunner
                     Console.WriteLine($"after seek to 60s: position={player.Position}");
                     player.Stop();
                     return opened ? 0 : 1;
+                }
+
+                case "--dump-audio":
+                {
+                    var filePath = StringArg(args, "--file") ?? Environment.GetEnvironmentVariable("UP_TEST_FILE");
+                    if (string.IsNullOrWhiteSpace(filePath))
+                    {
+                        Console.WriteLine("--dump-audio requires --file <path>");
+                        return 2;
+                    }
+                    var seconds = ParseIntArg(args, "--seconds", 25);
+                    var outPath = StringArg(args, "--out") ?? Path.Combine(Path.GetTempPath(), "up_dump.wav");
+
+                    using (var reader = UniversalPlayer.Classification.Audio.AudioStreamFactory.Open(filePath!))
+                    using (var writer = new NAudio.Wave.WaveFileWriter(outPath, reader.WaveFormat))
+                    {
+                        var seek = ParseIntArg(args, "--seek", 0);
+                        if (seek > 0)
+                        {
+                            reader.CurrentTime = TimeSpan.FromSeconds(seek);
+                            Console.WriteLine($"seeked to {seek}s -> position {reader.CurrentTime}");
+                        }
+
+                        var buffer = new byte[Math.Max(4096, reader.WaveFormat.AverageBytesPerSecond / 2)];
+                        var target = (long)seconds * reader.WaveFormat.AverageBytesPerSecond;
+                        long total = 0;
+                        while (total < target)
+                        {
+                            var read = reader.Read(buffer, 0, buffer.Length);
+                            if (read <= 0) break;
+                            var take = (int)Math.Min(read, target - total);
+                            writer.Write(buffer, 0, take);
+                            total += take;
+                        }
+                        writer.Flush();
+                        Console.WriteLine($"wrote {total} bytes ({reader.WaveFormat}) to {outPath}");
+                    }
+                    return 0;
                 }
 
                 case "--fix-names":

@@ -74,21 +74,37 @@ public sealed class FfmpegAudioStream : WaveStream
         }
     }
 
+    /// <summary>
+    /// Fills the whole buffer before returning. A pipe hands back whatever happens to be
+    /// available (ffmpeg writes in ~20 ms chunks), and NAudio queues the entire buffer to the
+    /// sound card regardless of how much was filled - so a short read would leave stale audio
+    /// in the tail and produce garbled sound.
+    /// </summary>
     public override int Read(byte[] buffer, int offset, int count)
     {
         lock (_gate)
         {
             if (_disposed || _output is null) return 0;
-            try
+
+            var total = 0;
+            while (total < count)
             {
-                var read = _output.Read(buffer, offset, count);
-                _streamedBytes += read;
-                return read;
+                int read;
+                try
+                {
+                    read = _output.Read(buffer, offset + total, count - total);
+                }
+                catch
+                {
+                    break;
+                }
+
+                if (read <= 0) break;   // end of stream / ffmpeg finished
+                total += read;
             }
-            catch
-            {
-                return 0;
-            }
+
+            _streamedBytes += total;
+            return total;
         }
     }
 
