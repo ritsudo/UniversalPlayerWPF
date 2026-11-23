@@ -11,32 +11,50 @@ public static class AudioStreamFactory
 {
     public static WaveStream Open(string path)
     {
+        // 1. Media Foundation by path (mp3, m4a, mp4/aac, flac, wav, ...)
         try
         {
             return new MediaFoundationReader(path);
         }
-        catch (Exception first)
+        catch
         {
-            try
-            {
-                var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-                var reader = new StreamMediaFoundationReader(stream);
-                return new OwningWaveStream(stream, reader);
-            }
-            catch
-            {
-                // fall through to NAudio's native readers (wav / aiff / ...)
-            }
+            // try the next decoder
+        }
 
+        // 2. Media Foundation over a stream (helps some containers/paths)
+        try
+        {
+            var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             try
             {
-                return new AudioFileReader(path);
+                return new OwningWaveStream(stream, new StreamMediaFoundationReader(stream));
             }
             catch
             {
-                throw first;
+                stream.Dispose();
             }
         }
+        catch
+        {
+            // try the next decoder
+        }
+
+        // 3. NAudio's own readers (wav / aiff / ...)
+        try
+        {
+            return new AudioFileReader(path);
+        }
+        catch
+        {
+            // try the next decoder
+        }
+
+        // 4. ffmpeg (Opus/AV1 mp4, APE, damaged files, ...) - shipped in the program folder
+        if (FfmpegLocator.IsAvailable)
+            return new FfmpegAudioStream(path);
+
+        throw new InvalidOperationException(
+            $"No decoder available for '{Path.GetFileName(path)}'. Put ffmpeg.exe next to the player for exotic formats.");
     }
 
     /// <summary>Keeps the backing stream alive for as long as the reader is used.</summary>
