@@ -65,6 +65,7 @@ public sealed class Database
             ("tracks", "content_tags", "ALTER TABLE tracks ADD COLUMN content_tags TEXT;"),
             ("tracks", "analysed_utc", "ALTER TABLE tracks ADD COLUMN analysed_utc TEXT;"),
             ("tracks", "analysis_conf", "ALTER TABLE tracks ADD COLUMN analysis_conf REAL;"),
+            ("tracks", "norm_gain", "ALTER TABLE tracks ADD COLUMN norm_gain REAL;"),
             ("tracks", "dir", "ALTER TABLE tracks ADD COLUMN dir TEXT;"),
             ("history", "kind", "ALTER TABLE history ADD COLUMN kind INTEGER NOT NULL DEFAULT 0;")
         };
@@ -155,6 +156,7 @@ public sealed class Database
             content_tags     TEXT,
             analysed_utc     TEXT,
             analysis_conf    REAL,
+            norm_gain        REAL,
             dir              TEXT
         );
 

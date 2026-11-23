@@ -169,7 +169,7 @@ public sealed class LibraryService
                 {
                     var result = _content.Analyze(track.Path, ct);
                     var tags = ContentTagComposer.Compose(result?.Tags, track.Year, track.Genre);
-                    _tracks.SetAnalysis(track.Id, tags, result?.Confidence ?? 0);
+                    _tracks.SetAnalysis(track.Id, tags, result?.Confidence ?? 0, result?.Gain);
                 }
                 catch (OperationCanceledException)
                 {

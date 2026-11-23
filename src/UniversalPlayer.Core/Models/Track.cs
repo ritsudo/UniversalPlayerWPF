@@ -39,6 +39,9 @@ public sealed class Track
 
     public double? AnalysisConfidence { get; set; }
 
+    /// <summary>Gain applied when "normalize" is on (1.0 = untouched). Measured from the audio.</summary>
+    public double? NormGain { get; set; }
+
     public bool IsAnalysed => AnalysedUtc is not null;
     public string DisplayTags => string.IsNullOrWhiteSpace(ContentTags) ? (IsAnalysed ? "-" : "...") : ContentTags!;
 

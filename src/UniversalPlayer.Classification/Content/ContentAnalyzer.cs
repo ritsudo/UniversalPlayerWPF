@@ -1,3 +1,4 @@
+using UniversalPlayer.Classification.Audio;
 using UniversalPlayer.Classification.Local;
 
 namespace UniversalPlayer.Classification.Content;
@@ -7,6 +8,9 @@ public sealed class ContentAnalysisResult
     /// <summary>';'-separated tags, strongest first.</summary>
     public string Tags { get; init; } = string.Empty;
     public double Confidence { get; init; }
+
+    /// <summary>Normalisation gain measured while analysing (null when unknown).</summary>
+    public double? Gain { get; init; }
     public IReadOnlyList<(string Tag, double Score)> Scored { get; init; } = Array.Empty<(string, double)>();
 
     public bool IsEmpty => string.IsNullOrWhiteSpace(Tags);
@@ -106,7 +110,13 @@ public sealed class ContentAnalyzer
 
         var tags = string.Join(";", picked.Select(p => p.Tag));
         var confidence = picked.Count == 0 ? 0 : picked.Average(p => p.Score);
-        return new ContentAnalysisResult { Tags = tags, Confidence = confidence, Scored = picked };
+        return new ContentAnalysisResult
+        {
+            Tags = tags,
+            Confidence = confidence,
+            Scored = picked,
+            Gain = LoudnessNormalizer.Gain(f)
+        };
     }
 
     private Dictionary<string, double> ZScores(Dictionary<string, double> raw)

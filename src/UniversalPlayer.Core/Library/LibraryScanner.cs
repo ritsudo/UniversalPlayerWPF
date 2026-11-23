@@ -236,7 +236,7 @@ public sealed class LibraryScanner
     {
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
-        cmd.CommandText = "UPDATE tracks SET analysed_utc = NULL WHERE id = @id;";
+        cmd.CommandText = "UPDATE tracks SET analysed_utc = NULL, norm_gain = NULL WHERE id = @id;";
         cmd.Parameters.AddWithValue("@id", trackId);
         cmd.ExecuteNonQuery();
     }

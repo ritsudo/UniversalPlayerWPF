@@ -14,8 +14,10 @@ public sealed class AudioPlayerService : IDisposable
     private IWavePlayer? _output;
     private WaveStream? _reader;
     private VolumeSampleProvider? _volume;
+    private VolumeSampleProvider? _normalize;
     private bool _stopRequested;
     private float _pendingVolume = 0.8f;
+    private double _normalizeGain = 1.0;
 
     /// <summary>Raised (on a background thread) when a track finishes playing naturally.</summary>
     public event EventHandler? TrackEnded;
@@ -37,18 +39,22 @@ public sealed class AudioPlayerService : IDisposable
         }
     }
 
-    public bool PlayFile(string path)
+    public bool PlayFile(string path, double normalizeGain = 1.0)
     {
         lock (_gate)
         {
             _stopRequested = true;
             Cleanup();
             _stopRequested = false;
+            _normalizeGain = normalizeGain <= 0 ? 1.0 : normalizeGain;
 
             try
             {
                 _reader = OpenReader(path);
-                _volume = new VolumeSampleProvider(_reader.ToSampleProvider()) { Volume = _pendingVolume };
+                var samples = _reader.ToSampleProvider();
+                _normalize = new VolumeSampleProvider(samples) { Volume = (float)_normalizeGain };
+                var limited = new UniversalPlayer.Classification.Audio.SoftLimiterSampleProvider(_normalize);
+                _volume = new VolumeSampleProvider(limited) { Volume = _pendingVolume };
                 _output = new WaveOutEvent { DesiredLatency = 300, NumberOfBuffers = 3 };
                 _output.PlaybackStopped += OnPlaybackStopped;
                 _output.Init(_volume);
@@ -63,6 +69,17 @@ public sealed class AudioPlayerService : IDisposable
                 PlaybackFailed?.Invoke(this, EventArgs.Empty);
                 return false;
             }
+        }
+    }
+
+    /// <summary>The normalisation gain currently applied (1.0 = off); settable while playing.</summary>
+    public double NormalizeGain
+    {
+        get => _normalizeGain;
+        set
+        {
+            _normalizeGain = value <= 0 ? 1.0 : value;
+            if (_normalize is not null) _normalize.Volume = (float)_normalizeGain;
         }
     }
 
@@ -134,6 +151,7 @@ public sealed class AudioPlayerService : IDisposable
             _reader = null;
         }
         _volume = null;
+        _normalize = null;
     }
 
     public void Dispose()

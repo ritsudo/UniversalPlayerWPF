@@ -17,6 +17,7 @@ public sealed class FfmpegAudioStream : WaveStream
 {
     private const int OutputSampleRate = 44100;
     private const int OutputChannels = 2;
+    private const int ReadTimeoutMs = 10000;
     private static readonly WaveFormat OutputFormat = new(OutputSampleRate, 16, OutputChannels);
 
     private readonly string _path;
@@ -79,6 +80,9 @@ public sealed class FfmpegAudioStream : WaveStream
     /// available (ffmpeg writes in ~20 ms chunks), and NAudio queues the entire buffer to the
     /// sound card regardless of how much was filled - so a short read would leave stale audio
     /// in the tail and produce garbled sound.
+    ///
+    /// The wait is bounded: if the decoder stalls the process is dropped instead of blocking
+    /// the playback or analysis thread forever.
     /// </summary>
     public override int Read(byte[] buffer, int offset, int count)
     {
@@ -92,7 +96,13 @@ public sealed class FfmpegAudioStream : WaveStream
                 int read;
                 try
                 {
-                    read = _output.Read(buffer, offset + total, count - total);
+                    var pending = _output.ReadAsync(buffer, offset + total, count - total);
+                    if (!pending.Wait(ReadTimeoutMs))
+                    {
+                        Stop();          // stalled decoder: treat as end of stream
+                        break;
+                    }
+                    read = pending.GetAwaiter().GetResult();
                 }
                 catch
                 {

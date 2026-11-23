@@ -413,6 +413,9 @@
                     <Button Content="{Binding RepeatLabel}" Command="{Binding CycleRepeatCommand}" Margin="0,0,12,0" Width="110"/>
                     <CheckBox Content="Next song: similar" ToolTip="Auto-play the most similar remaining track when the queue ends (no repeats in a session)"
                               IsChecked="{Binding AutoRecommend}" Foreground="{StaticResource Text}" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                    <CheckBox Content="normalize" IsChecked="{Binding NormalizeVolume}" Foreground="{StaticResource Text}"
+                              VerticalAlignment="Center" Margin="0,0,12,0"
+                              ToolTip="Even out the level: quiet tracks are amplified, loud ones slightly tamed"/>
                     <TextBlock Text="&#x1F50A;" VerticalAlignment="Center" Foreground="{StaticResource Muted}" Margin="0,0,6,0"/>
                     <Slider Width="110" VerticalAlignment="Center" Minimum="0" Maximum="100" Value="{Binding Volume, Mode=TwoWay}"/>
                 </StackPanel>

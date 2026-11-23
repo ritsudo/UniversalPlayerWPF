@@ -5,6 +5,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using UniversalPlayer.App.Services;
 using UniversalPlayer.Classification;
+using UniversalPlayer.Classification.Audio;
 using UniversalPlayer.Core.Data;
 using UniversalPlayer.Core.Models;
 using UniversalPlayer.Core.Settings;
@@ -21,6 +22,7 @@ public partial class MainViewModel : ObservableObject
     private readonly RecommendationService _recommendation;
     private readonly HistoryService _history;
     private readonly AudioPlayerService _player;
+    private readonly TrackNormalizer _normalizer = new(TimeSpan.FromSeconds(1.5));
 
     private readonly DispatcherTimer _searchDebounce;
     private readonly DispatcherTimer _positionTimer;
@@ -335,6 +337,21 @@ public partial class MainViewModel : ObservableObject
     {
         get => Settings.FullRescan;
         set { if (Settings.FullRescan != value) { Settings.FullRescan = value; OnPropertyChanged(); SaveSettings(); } }
+    }
+
+    /// <summary>Persistence-backed "normalize" switch (applies a per-track gain when playing).</summary>
+    public bool NormalizeVolume
+    {
+        get => Settings.NormalizeVolume;
+        set
+        {
+            if (Settings.NormalizeVolume == value) return;
+            Settings.NormalizeVolume = value;
+            OnPropertyChanged();
+            SaveSettings();
+            if (!value) _player.NormalizeGain = 1.0;
+            StatusText = value ? "Volume normalization on" : "Volume normalization off";
+        }
     }
 
     public int HistoryRetentionDays
@@ -678,7 +695,8 @@ public partial class MainViewModel : ObservableObject
         _currentIndex = index;
         var track = Queue[index];
 
-        if (!_player.PlayFile(track.Path))
+        var gain = NormalizeVolume ? ResolveGain(track) : 1.0;
+        if (!_player.PlayFile(track.Path, gain))
         {
             StatusText = $"Cannot play: {track.FileName}";
             _player.Stop();
@@ -702,6 +720,44 @@ public partial class MainViewModel : ObservableObject
         StatusText = $"Playing: {track.DisplayTitle} - {track.DisplayArtist}";
         CurrentTrackChanged?.Invoke();
         RefreshHistory();
+        PrewarmNextGain();
+    }
+
+    /// <summary>Gain for the track: stored value when known, otherwise measured once and remembered.</summary>
+    private double ResolveGain(Track track)
+    {
+        if (track.NormGain is double stored && stored > 0)
+            return stored;
+
+        var gain = _normalizer.Measure(track.Path);
+        track.NormGain = gain;
+        try { _tracks.SetNormGain(track.Id, gain); } catch { /* best effort */ }
+        return gain;
+    }
+
+    /// <summary>Measures the next queued track's gain in the background so playback never waits.</summary>
+    private void PrewarmNextGain()
+    {
+        if (!NormalizeVolume) return;
+        var next = _currentIndex + 1;
+        if (next < 0 || next >= Queue.Count) return;
+
+        var track = Queue[next];
+        if (track.NormGain is not null) return;
+
+        Task.Run(() =>
+        {
+            try
+            {
+                var gain = _normalizer.Measure(track.Path);
+                track.NormGain = gain;
+                _tracks.SetNormGain(track.Id, gain);
+            }
+            catch
+            {
+                // measurement is best effort
+            }
+        });
     }
 
     private void OnTrackEnded()

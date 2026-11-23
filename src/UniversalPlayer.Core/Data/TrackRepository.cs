@@ -11,7 +11,7 @@ public sealed class TrackRepository
     private const string Columns =
         "id, path, file_name, folder, title, artist, album, genre, genre_source, year, track_number, " +
         "duration_ms, bitrate, sample_rate, channels, size_bytes, file_modified_utc, added_utc, last_seen_utc, " +
-        "classified_utc, play_count, last_played_utc, missing, content_tags, analysed_utc, analysis_conf, dir";
+        "classified_utc, play_count, last_played_utc, missing, content_tags, analysed_utc, analysis_conf, dir, norm_gain";
 
     private static Track Map(SqliteDataReader r) => new()
     {
@@ -41,7 +41,8 @@ public sealed class TrackRepository
         ContentTags = DbValue.GetStringOrNull(r, 23),
         AnalysedUtc = DbValue.GetNullableDate(r, 24),
         AnalysisConfidence = r.IsDBNull(25) ? null : r.GetDouble(25),
-        Dir = DbValue.GetStringOrNull(r, 26) ?? string.Empty
+        Dir = DbValue.GetStringOrNull(r, 26) ?? string.Empty,
+        NormGain = r.IsDBNull(27) ? null : r.GetDouble(27)
     };
 
     private const string UpsertSql = """
@@ -307,15 +308,28 @@ public sealed class TrackRepository
     }
 
     /// <summary>Stores the content-analysis result (and marks the track as analysed).</summary>
-    public void SetAnalysis(long id, string? tags, double confidence)
+    public void SetAnalysis(long id, string? tags, double confidence, double? normGain = null)
     {
         using var c = _db.Open();
         using var cmd = c.CreateCommand();
         cmd.CommandText =
-            "UPDATE tracks SET content_tags = @t, analysis_conf = @c, analysed_utc = @u WHERE id = @id;";
+            "UPDATE tracks SET content_tags = @t, analysis_conf = @c, analysed_utc = @u, " +
+            "norm_gain = COALESCE(@g, norm_gain) WHERE id = @id;";
         cmd.Parameters.AddWithValue("@t", (object?)Nullify(tags) ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@c", confidence);
         cmd.Parameters.AddWithValue("@u", DbValue.ToDb(DateTime.UtcNow));
+        cmd.Parameters.AddWithValue("@g", (object?)normGain ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@id", id);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>Stores the measured normalisation gain for a track.</summary>
+    public void SetNormGain(long id, double gain)
+    {
+        using var c = _db.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = "UPDATE tracks SET norm_gain = @g WHERE id = @id;";
+        cmd.Parameters.AddWithValue("@g", gain);
         cmd.Parameters.AddWithValue("@id", id);
         cmd.ExecuteNonQuery();
     }

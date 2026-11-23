@@ -9,6 +9,7 @@ public sealed class AppSettings
     public double Volume { get; set; } = 0.8;
     public int RepeatMode { get; set; }
     public bool Shuffle { get; set; }
+    public bool NormalizeVolume { get; set; }
     public bool AutoRecommend { get; set; } = true;
     public bool MinimizeToTray { get; set; } = true;
     public bool MinimizeToTrayOnClose { get; set; } = true;

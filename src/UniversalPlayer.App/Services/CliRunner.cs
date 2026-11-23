@@ -1,5 +1,6 @@
 using System.IO;
 using System.Runtime.InteropServices;
+using NAudio.Wave;
 using UniversalPlayer.Classification;
 using UniversalPlayer.Core.Data;
 using UniversalPlayer.Core.Settings;
@@ -16,7 +17,7 @@ public static class CliRunner
     private static extern bool AttachConsole(int dwProcessId);
 
     public static bool IsCliMode(string[] args) =>
-        args.Length > 0 && args[0].ToLowerInvariant() is "--scan" or "--classify" or "--analyse" or "--analyze" or "--fix-names" or "--dump-audio" or "--stats" or "--test-audio" or "--test-online" or "--help" or "-h" or "/?";
+        args.Length > 0 && args[0].ToLowerInvariant() is "--scan" or "--classify" or "--analyse" or "--analyze" or "--fix-names" or "--normalize" or "--dump-audio" or "--stats" or "--test-audio" or "--test-online" or "--help" or "-h" or "/?";
 
     public static int Run(string[] args, SettingsStore settingsStore, AppSettings settings)
     {
@@ -53,6 +54,7 @@ public static class CliRunner
                     Console.WriteLine("  --classify  classify tracks that have no genre yet");
                     Console.WriteLine("  --analyse   run the content analysis on unanalysed tracks (--all to redo, --limit n)");
                     Console.WriteLine("  --fix-names repair track names/tags stored with the wrong code page");
+                    Console.WriteLine("  --normalize measure volume-normalisation gains (--limit n)");
                     Console.WriteLine("  --dump-audio --file <path> [--seconds n] [--seek s] [--out wav]  decode to a wav (diagnostics)");
                     Console.WriteLine("  --stats     show library statistics");
                     Console.WriteLine("  --root <folder>  use this music folder instead of the configured one");
@@ -114,32 +116,71 @@ public static class CliRunner
                         return 2;
                     }
                     var seconds = ParseIntArg(args, "--seconds", 25);
+                    var seek = ParseIntArg(args, "--seek", 0);
+                    var gainArg = StringArg(args, "--gain");
+                    var gain = double.TryParse(gainArg, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var g) ? g : 1.0;
                     var outPath = StringArg(args, "--out") ?? Path.Combine(Path.GetTempPath(), "up_dump.wav");
 
-                    using (var reader = UniversalPlayer.Classification.Audio.AudioStreamFactory.Open(filePath!))
-                    using (var writer = new NAudio.Wave.WaveFileWriter(outPath, reader.WaveFormat))
+                    using var reader = UniversalPlayer.Classification.Audio.AudioStreamFactory.Open(filePath!);
+                    if (seek > 0)
                     {
-                        var seek = ParseIntArg(args, "--seek", 0);
-                        if (seek > 0)
-                        {
-                            reader.CurrentTime = TimeSpan.FromSeconds(seek);
-                            Console.WriteLine($"seeked to {seek}s -> position {reader.CurrentTime}");
-                        }
+                        reader.CurrentTime = TimeSpan.FromSeconds(seek);
+                        Console.WriteLine($"seeked to {seek}s -> position {reader.CurrentTime}");
+                    }
 
-                        var buffer = new byte[Math.Max(4096, reader.WaveFormat.AverageBytesPerSecond / 2)];
-                        var target = (long)seconds * reader.WaveFormat.AverageBytesPerSecond;
+                    // mirror the player's DSP: normalisation gain, then the soft limiter
+                    NAudio.Wave.ISampleProvider provider = reader.ToSampleProvider();
+                    if (Math.Abs(gain - 1.0) > 1e-6)
+                    {
+                        provider = new NAudio.Wave.SampleProviders.VolumeSampleProvider(provider) { Volume = (float)gain };
+                        provider = new UniversalPlayer.Classification.Audio.SoftLimiterSampleProvider(provider);
+                    }
+
+                    var wave = new NAudio.Wave.SampleProviders.SampleToWaveProvider16(provider);
+                    using (var writer = new NAudio.Wave.WaveFileWriter(outPath, wave.WaveFormat))
+                    {
+                        var buffer = new byte[Math.Max(4096, wave.WaveFormat.AverageBytesPerSecond / 2)];
+                        var target = (long)seconds * wave.WaveFormat.AverageBytesPerSecond;
                         long total = 0;
                         while (total < target)
                         {
-                            var read = reader.Read(buffer, 0, buffer.Length);
+                            var read = wave.Read(buffer, 0, buffer.Length);
                             if (read <= 0) break;
                             var take = (int)Math.Min(read, target - total);
                             writer.Write(buffer, 0, take);
                             total += take;
                         }
                         writer.Flush();
-                        Console.WriteLine($"wrote {total} bytes ({reader.WaveFormat}) to {outPath}");
+                        Console.WriteLine($"wrote {total} bytes (gain {gain:0.###}) to {outPath}");
                     }
+                    return 0;
+                }
+
+                case "--normalize":
+                {
+                    var dbN = Open(settings);
+                    var tracksN = new TrackRepository(dbN);
+                    var normalizer = new UniversalPlayer.Classification.Audio.TrackNormalizer(TimeSpan.FromSeconds(15));
+                    var limitN = ParseIntArg(args, "--limit", int.MaxValue);
+
+                    var pending = tracksN.Search(null, null, 200_000)
+                        .Where(t => t.NormGain is null)
+                        .Take(limitN)
+                        .ToList();
+
+                    Console.WriteLine($"Measuring {pending.Count} track(s) ...");
+                    var doneN = 0;
+                    var boosted = 0;
+                    foreach (var track in pending)
+                    {
+                        var gain = normalizer.Measure(track.Path, CancellationToken.None);
+                        tracksN.SetNormGain(track.Id, gain);
+                        doneN++;
+                        if (gain > 1.02) boosted++;
+                        if (doneN % 25 == 0 || doneN == pending.Count)
+                            Console.WriteLine($"  {doneN}/{pending.Count} measured ({boosted} amplified)");
+                    }
+                    Console.WriteLine($"Done. {doneN} measured, {boosted} amplified.");
                     return 0;
                 }
 
