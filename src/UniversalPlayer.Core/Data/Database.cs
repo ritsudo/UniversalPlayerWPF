@@ -57,7 +57,7 @@ public sealed class Database
         EnsureColumns(conn);
     }
 
-    /// <summary>Adds columns introduced after the first release, so an existing database keeps working.</summary>
+    /// <summary>Adds columns/tables introduced after the first release, so an existing database keeps working.</summary>
     private static void EnsureColumns(SqliteConnection conn)
     {
         var additions = new (string Table, string Name, string Ddl)[]
@@ -65,6 +65,7 @@ public sealed class Database
             ("tracks", "content_tags", "ALTER TABLE tracks ADD COLUMN content_tags TEXT;"),
             ("tracks", "analysed_utc", "ALTER TABLE tracks ADD COLUMN analysed_utc TEXT;"),
             ("tracks", "analysis_conf", "ALTER TABLE tracks ADD COLUMN analysis_conf REAL;"),
+            ("tracks", "dir", "ALTER TABLE tracks ADD COLUMN dir TEXT;"),
             ("history", "kind", "ALTER TABLE history ADD COLUMN kind INTEGER NOT NULL DEFAULT 0;")
         };
 
@@ -82,13 +83,47 @@ public sealed class Database
             existing[table] = columns;
         }
 
+        var addedDir = false;
         foreach (var (table, name, ddl) in additions)
         {
             if (existing[table].Contains(name)) continue;
             using var alter = conn.CreateCommand();
             alter.CommandText = ddl;
             alter.ExecuteNonQuery();
+            if (table == "tracks" && name == "dir") addedDir = true;
         }
+
+        if (addedDir)
+            BackfillDir(conn);
+    }
+
+    /// <summary>Fills the new "dir" column from each track's path (one-off migration).</summary>
+    private static void BackfillDir(SqliteConnection conn)
+    {
+        var rows = new List<(long Id, string Path)>();
+        using (var read = conn.CreateCommand())
+        {
+            read.CommandText = "SELECT id, path FROM tracks;";
+            using var reader = read.ExecuteReader();
+            while (reader.Read())
+                rows.Add((reader.GetInt64(0), reader.GetString(1)));
+        }
+
+        using var tx = conn.BeginTransaction();
+        foreach (var (id, path) in rows)
+        {
+            string dir;
+            try { dir = System.IO.Path.GetDirectoryName(path) ?? string.Empty; }
+            catch { dir = string.Empty; }
+
+            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = "UPDATE tracks SET dir = @d WHERE id = @id;";
+            cmd.Parameters.AddWithValue("@d", dir);
+            cmd.Parameters.AddWithValue("@id", id);
+            cmd.ExecuteNonQuery();
+        }
+        tx.Commit();
     }
 
     private const string Schema = """
@@ -119,7 +154,17 @@ public sealed class Database
             search_text      TEXT    NOT NULL DEFAULT '',
             content_tags     TEXT,
             analysed_utc     TEXT,
-            analysis_conf    REAL
+            analysis_conf    REAL,
+            dir              TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS scan_folders (
+            dir        TEXT PRIMARY KEY,
+            file_count INTEGER NOT NULL DEFAULT 0,
+            total_size INTEGER NOT NULL DEFAULT 0,
+            max_mtime  TEXT,
+            name_hash  TEXT,
+            dir_mtime  TEXT
         );
 
         CREATE INDEX IF NOT EXISTS ix_tracks_artist  ON tracks(artist);

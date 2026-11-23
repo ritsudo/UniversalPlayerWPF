@@ -265,6 +265,16 @@ public partial class MainViewModel : ObservableObject
         _searchDebounce.Start();
     }
 
+    /// <summary>The little X in the search box: clears the field and restores the full library.</summary>
+    [RelayCommand]
+    private void ClearSearch()
+    {
+        _searchDebounce.Stop();
+        SearchText = string.Empty;
+        _searchDebounce.Stop();
+        RefreshLibrary();
+    }
+
     partial void OnGenreFilterChanged(string value) => RefreshLibrary();
     partial void OnVolumeChanged(double value)
     {
@@ -321,6 +331,12 @@ public partial class MainViewModel : ObservableObject
         set { if (Settings.MinimizeToTray != value) { Settings.MinimizeToTray = value; OnPropertyChanged(); SaveSettings(); } }
     }
 
+    public bool FullRescan
+    {
+        get => Settings.FullRescan;
+        set { if (Settings.FullRescan != value) { Settings.FullRescan = value; OnPropertyChanged(); SaveSettings(); } }
+    }
+
     public int HistoryRetentionDays
     {
         get => Settings.HistoryRetentionDays;
@@ -338,13 +354,7 @@ public partial class MainViewModel : ObservableObject
         try
         {
             var ct = CancellationToken.None;
-            await _libraryService.RescanAsync(LibraryRoot, ct);
-            if (OnlineClassification)
-            {
-                var revisited = _tracks.ResetLocalModelClassifications();
-                if (revisited > 0)
-                    StatusText = $"Re-checking {revisited} rough guess(es) online ...";
-            }
+            await _libraryService.RescanAsync(LibraryRoot, !FullRescan, ct);
             await RunClassificationAsync(ct);
             RefreshAll();
             StatusText = "Library rescan complete.";
@@ -369,6 +379,37 @@ public partial class MainViewModel : ObservableObject
         IsProgressIndeterminate = false;
         try
         {
+            await RunClassificationAsync(CancellationToken.None);
+            RefreshGenres();
+            RefreshLibrary();
+            RefreshArtists();
+            RefreshPending();
+        }
+        finally
+        {
+            IsBusy = false;
+            ProgressValue = 0;
+        }
+    }
+
+    /// <summary>Drops the rough local-model guesses and looks them up online again (needs internet).</summary>
+    [RelayCommand]
+    private async Task ImproveGenresAsync()
+    {
+        if (IsBusy) return;
+        if (!OnlineClassification)
+        {
+            StatusText = "Enable 'Search online' in Settings first.";
+            return;
+        }
+
+        IsBusy = true;
+        try
+        {
+            var revisited = _tracks.ResetLocalModelClassifications();
+            StatusText = revisited > 0
+                ? $"Re-checking {revisited} rough genre guess(es) online ..."
+                : "No rough guesses to re-check.";
             await RunClassificationAsync(CancellationToken.None);
             RefreshGenres();
             RefreshLibrary();

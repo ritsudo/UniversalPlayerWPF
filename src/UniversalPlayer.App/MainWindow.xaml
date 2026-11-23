@@ -38,8 +38,14 @@
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0" Text="&#x1F50D;" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                    <TextBox Grid.Column="1" MinWidth="140" HorizontalAlignment="Stretch"
-                             Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"/>
+                    <Grid Grid.Column="1">
+                        <TextBox MinWidth="140" HorizontalAlignment="Stretch" Padding="8,5,28,5"
+                                 Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"/>
+                        <Button Style="{StaticResource InlineIconButton}" Content="&#x2715;"
+                                HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,5,0"
+                                Visibility="{Binding SearchText, Converter={StaticResource NotEmptyToVis}}"
+                                Command="{Binding ClearSearchCommand}" ToolTip="Clear search"/>
+                    </Grid>
                 </Grid>
 
                 <ComboBox Grid.Column="2" Width="140" Margin="0,0,10,0" VerticalAlignment="Center"
@@ -82,6 +88,9 @@
                                     Visibility="{Binding IsAnalysing, Converter={StaticResource BoolToVis}}"/>
                             <CheckBox Content="only unanalysed" IsChecked="{Binding AnalyseOnlyUnanalysed}" Foreground="{StaticResource Text}"
                                       VerticalAlignment="Center" Margin="0,0,12,0"/>
+                            <CheckBox Content="full rescan" IsChecked="{Binding FullRescan}" Foreground="{StaticResource Text}"
+                                      VerticalAlignment="Center" Margin="0,0,12,0"
+                                      ToolTip="Re-check every folder; off = only folders whose contents changed"/>
                             <TextBlock Text="{Binding LibraryCountText}" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="4,0,0,0"/>
                         </StackPanel>
 
@@ -302,6 +311,9 @@
                                       IsChecked="{Binding OnlineClassification}" Foreground="{StaticResource Text}" Margin="0,4"/>
                             <CheckBox Content="Fall back to the local acoustic model when nothing is found online"
                                       IsChecked="{Binding LocalModelFallback}" Foreground="{StaticResource Text}" Margin="0,4"/>
+                            <Button Content="Re-check model guesses online" Margin="0,8,0,0" HorizontalAlignment="Left"
+                                    Command="{Binding ImproveGenresCommand}"
+                                    ToolTip="Looks up the tracks that were only guessed locally once more on the internet"/>
 
                             <TextBlock Text="Behaviour" FontWeight="SemiBold" Margin="0,18,0,4"/>
                             <CheckBox Content="Minimise to the tray instead of the taskbar (keeps playing)"

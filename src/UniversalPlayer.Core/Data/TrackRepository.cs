@@ -11,7 +11,7 @@ public sealed class TrackRepository
     private const string Columns =
         "id, path, file_name, folder, title, artist, album, genre, genre_source, year, track_number, " +
         "duration_ms, bitrate, sample_rate, channels, size_bytes, file_modified_utc, added_utc, last_seen_utc, " +
-        "classified_utc, play_count, last_played_utc, missing, content_tags, analysed_utc, analysis_conf";
+        "classified_utc, play_count, last_played_utc, missing, content_tags, analysed_utc, analysis_conf, dir";
 
     private static Track Map(SqliteDataReader r) => new()
     {
@@ -40,21 +40,23 @@ public sealed class TrackRepository
         Missing = r.GetInt32(22) != 0,
         ContentTags = DbValue.GetStringOrNull(r, 23),
         AnalysedUtc = DbValue.GetNullableDate(r, 24),
-        AnalysisConfidence = r.IsDBNull(25) ? null : r.GetDouble(25)
+        AnalysisConfidence = r.IsDBNull(25) ? null : r.GetDouble(25),
+        Dir = DbValue.GetStringOrNull(r, 26) ?? string.Empty
     };
 
     private const string UpsertSql = """
         INSERT INTO tracks
             (path, file_name, folder, title, artist, album, genre, genre_source, year, track_number,
              duration_ms, bitrate, sample_rate, channels, size_bytes, file_modified_utc, added_utc,
-             last_seen_utc, classified_utc, missing, search_text)
+             last_seen_utc, classified_utc, missing, search_text, dir)
         VALUES
             (@path, @file_name, @folder, @title, @artist, @album, @genre, @genre_source, @year, @track_number,
              @duration_ms, @bitrate, @sample_rate, @channels, @size_bytes, @file_modified_utc, @added_utc,
-             @last_seen_utc, @classified_utc, 0, @search_text)
+             @last_seen_utc, @classified_utc, 0, @search_text, @dir)
         ON CONFLICT(path) DO UPDATE SET
             file_name        = excluded.file_name,
             folder           = excluded.folder,
+            dir              = excluded.dir,
             title            = COALESCE(excluded.title, tracks.title),
             artist           = COALESCE(excluded.artist, tracks.artist),
             album            = COALESCE(excluded.album, tracks.album),
@@ -104,6 +106,7 @@ public sealed class TrackRepository
         cmd.Parameters.AddWithValue("@last_seen_utc", DbValue.ToDb(t.LastSeenUtc));
         cmd.Parameters.AddWithValue("@classified_utc", DbValue.ToDb(t.ClassifiedUtc));
         cmd.Parameters.AddWithValue("@search_text", searchText);
+        cmd.Parameters.AddWithValue("@dir", t.Dir);
         return (long)(cmd.ExecuteScalar() ?? 0L);
     }
 
@@ -122,7 +125,14 @@ public sealed class TrackRepository
     public Track? GetById(long id)
     {
         using var c = _db.Open();
-        using var cmd = c.CreateCommand();
+        return GetById(c, null, id);
+    }
+
+    /// <summary>Reads one track on an existing connection/transaction (used by the scanner).</summary>
+    public Track? GetById(SqliteConnection conn, SqliteTransaction? tx, long id)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
         cmd.CommandText = $"SELECT {Columns} FROM tracks WHERE id = @id LIMIT 1;";
         cmd.Parameters.AddWithValue("@id", id);
         using var r = cmd.ExecuteReader();
@@ -445,5 +455,87 @@ public sealed class TrackRepository
 
         tx.Commit();
         return updates.Count;
+    }
+
+    /// <summary>Light-weight snapshot of one track, used by the scanner to spot changes.</summary>
+    public sealed record TrackRef(
+        long Id,
+        long SizeBytes,
+        DateTime FileModifiedUtc,
+        DateTime AddedUtc,
+        string? Genre,
+        GenreSource GenreSource,
+        DateTime? ClassifiedUtc);
+
+    /// <summary>Every track keyed by path (for change detection).</summary>
+    public Dictionary<string, TrackRef> LoadPathIndex()
+    {
+        using var c = _db.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText =
+            "SELECT id, path, size_bytes, file_modified_utc, added_utc, genre, genre_source, classified_utc FROM tracks;";
+        var map = new Dictionary<string, TrackRef>(StringComparer.OrdinalIgnoreCase);
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            map[r.GetString(1)] = new TrackRef(
+                r.GetInt64(0),
+                r.GetInt64(2),
+                DbValue.GetDate(r, 3),
+                DbValue.GetDate(r, 4),
+                DbValue.GetStringOrNull(r, 5),
+                Enum.TryParse<GenreSource>(DbValue.GetStringOrNull(r, 6), out var source) ? source : GenreSource.None,
+                DbValue.GetNullableDate(r, 7));
+        }
+        return map;
+    }
+
+    /// <summary>Rows currently flagged missing, keyed by "file name|size" so a moved file can be re-pointed.</summary>
+    public Dictionary<string, Track> LoadParked()
+    {
+        using var c = _db.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = $"SELECT {Columns} FROM tracks WHERE missing = 1;";
+        var map = new Dictionary<string, Track>(StringComparer.OrdinalIgnoreCase);
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            var track = Map(r);
+            map.TryAdd(ParkKey(track.FileName, track.SizeBytes), track);
+        }
+        return map;
+    }
+
+    public static string ParkKey(string fileName, long sizeBytes) => fileName + "|" + sizeBytes;
+
+    /// <summary>Re-points an existing row to a new path, keeping play counts, genre and tags.</summary>
+    public void UpdateLocation(SqliteConnection conn, SqliteTransaction? tx, Track track)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = """
+            UPDATE tracks SET
+                path = @path, dir = @dir, folder = @folder, size_bytes = @size,
+                file_modified_utc = @mtime, last_seen_utc = @seen, missing = 0, search_text = @search
+            WHERE id = @id;
+            """;
+        cmd.Parameters.AddWithValue("@path", track.Path);
+        cmd.Parameters.AddWithValue("@dir", track.Dir);
+        cmd.Parameters.AddWithValue("@folder", track.Folder);
+        cmd.Parameters.AddWithValue("@size", track.SizeBytes);
+        cmd.Parameters.AddWithValue("@mtime", DbValue.ToDb(track.FileModifiedUtc));
+        cmd.Parameters.AddWithValue("@seen", DbValue.ToDb(track.LastSeenUtc));
+        cmd.Parameters.AddWithValue("@search", track.BuildSearchText());
+        cmd.Parameters.AddWithValue("@id", track.Id);
+        cmd.ExecuteNonQuery();
+    }
+
+    public void MarkMissing(SqliteConnection conn, SqliteTransaction? tx, long id)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = "UPDATE tracks SET missing = 1 WHERE id = @id;";
+        cmd.Parameters.AddWithValue("@id", id);
+        cmd.ExecuteNonQuery();
     }
 }

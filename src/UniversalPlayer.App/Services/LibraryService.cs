@@ -17,6 +17,7 @@ public sealed class LibraryService
     private readonly Database _db;
     private readonly TrackRepository _tracks;
     private readonly ArtistRepository _artists;
+    private readonly ScanFolderRepository _scanFolders;
     private readonly ClassificationService _classifier;
     private readonly ContentAnalyzer _content;
 
@@ -24,12 +25,14 @@ public sealed class LibraryService
         Database db,
         TrackRepository tracks,
         ArtistRepository artists,
+        ScanFolderRepository scanFolders,
         ClassificationService classifier,
         ContentAnalyzer content)
     {
         _db = db;
         _tracks = tracks;
         _artists = artists;
+        _scanFolders = scanFolders;
         _classifier = classifier;
         _content = content;
     }
@@ -39,18 +42,18 @@ public sealed class LibraryService
 
     public string ContentModelPath => _content.ModelPath;
 
-    public Task<ScanReport> RescanAsync(string root, CancellationToken ct) =>
+    public Task<ScanReport> RescanAsync(string root, bool fastScan, CancellationToken ct) =>
         Task.Run(() =>
         {
-            var scanner = new LibraryScanner(_db, _tracks);
+            var scanner = new LibraryScanner(_db, _tracks, _scanFolders);
             scanner.Progress += (done, total, file) =>
             {
                 Status?.Invoke($"Scanning {done}/{total} - {Path.GetFileName(file)}");
                 Progress?.Invoke(done, total);
             };
-            Status?.Invoke($"Scanning {root} ...");
-            var report = scanner.Scan(root, ct);
-            Status?.Invoke($"Scan complete: {report.Added} new, {report.Updated} updated, {report.Missing} missing.");
+            Status?.Invoke(fastScan ? $"Fast scan of {root} ..." : $"Full scan of {root} ...");
+            var report = scanner.Scan(root, fastScan, ct);
+            Status?.Invoke(report.Summary);
             return report;
         }, ct);
 

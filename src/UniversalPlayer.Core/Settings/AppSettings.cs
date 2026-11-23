@@ -14,6 +14,7 @@ public sealed class AppSettings
     public bool MinimizeToTrayOnClose { get; set; } = true;
     public bool OnlineClassification { get; set; } = true;
     public bool LocalModelFallback { get; set; } = true;
+    public bool FullRescan { get; set; }
     public int HistoryRetentionDays { get; set; } = 31;
     public DateTime? LastScanUtc { get; set; }
     public string? LastTrackPath { get; set; }

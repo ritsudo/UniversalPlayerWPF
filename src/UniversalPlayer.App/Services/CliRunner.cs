@@ -48,7 +48,8 @@ public static class CliRunner
                 case "/?":
                     Console.WriteLine();
                     Console.WriteLine("Universal Player command line:");
-                    Console.WriteLine("  --scan      rescan the library and classify new tracks");
+                    Console.WriteLine("  --scan      rescan the library and classify new tracks (fast: only changed folders)");
+                    Console.WriteLine("  --full-scan with --scan: re-check every folder instead of only changed ones");
                     Console.WriteLine("  --classify  classify tracks that have no genre yet");
                     Console.WriteLine("  --analyse   run the content analysis on unanalysed tracks (--all to redo, --limit n)");
                     Console.WriteLine("  --fix-names repair track names/tags stored with the wrong code page");
@@ -208,11 +209,12 @@ public static class CliRunner
 
                     if (mode == "--scan")
                     {
+                        var fastScan = !args.Any(a => a.Equals("--full-scan", StringComparison.OrdinalIgnoreCase));
                         Console.WriteLine();
-                        Console.WriteLine($"Scanning {settings.LibraryRoot} ...");
-                        var scanner = new Core.Library.LibraryScanner(db, tracks);
-                        var report = scanner.Scan(settings.LibraryRoot, CancellationToken.None);
-                        Console.WriteLine($"Scanned {report.Scanned}, added {report.Added}, updated {report.Updated}, missing {report.Missing}, failed {report.Failed} in {report.Elapsed.TotalSeconds:F1}s.");
+                        Console.WriteLine($"{(fastScan ? "Fast" : "Full")} scan of {settings.LibraryRoot} ...");
+                        var scanner = new Core.Library.LibraryScanner(db, tracks, new ScanFolderRepository(db));
+                        var report = scanner.Scan(settings.LibraryRoot, fastScan, CancellationToken.None);
+                        Console.WriteLine(report.Summary);
                         foreach (var err in report.Errors) Console.WriteLine("  ! " + err);
 
                         if (args.Any(a => a.Equals("--no-classify", StringComparison.OrdinalIgnoreCase)))

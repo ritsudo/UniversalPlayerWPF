@@ -7,6 +7,9 @@ public sealed class Track
     public string Path { get; set; } = string.Empty;
     public string FileName { get; set; } = string.Empty;
     public string Folder { get; set; } = string.Empty;
+
+    /// <summary>Full directory of the file; used to decide which folders a rescan must re-check.</summary>
+    public string Dir { get; set; } = string.Empty;
     public string Title { get; set; } = string.Empty;
     public string? Artist { get; set; }
     public string? Album { get; set; }
@@ -111,11 +114,39 @@ public sealed class PlaylistItem
 /// <summary>Summary of a library scan.</summary>
 public sealed class ScanReport
 {
+    /// <summary>True when folders whose signature did not change were skipped.</summary>
+    public bool FastScan { get; set; }
+    public int FoldersTotal { get; set; }
+    public int FoldersScanned { get; set; }
+    public int FoldersSkipped { get; set; }
+    public int FilesSeen { get; set; }
+
     public int Scanned { get; set; }
     public int Added { get; set; }
     public int Updated { get; set; }
+    public int Moved { get; set; }
     public int Missing { get; set; }
     public int Failed { get; set; }
     public TimeSpan Elapsed { get; set; }
     public List<string> Errors { get; } = new();
+
+    public string Summary =>
+        $"{(FastScan ? "Fast scan" : "Full scan")}: {FoldersScanned} of {FoldersTotal} folder(s) checked, " +
+        $"{FoldersSkipped} skipped; {FilesSeen} file(s) known; {Added} new, {Moved} moved, {Updated} updated, " +
+        $"{Missing} missing, {Failed} failed in {Elapsed.TotalSeconds:F1}s.";
+}
+
+/// <summary>Signature of one folder, used to skip folders that did not change since the last scan.</summary>
+public sealed class ScanFolder
+{
+    public string Dir { get; set; } = string.Empty;
+    public int FileCount { get; set; }
+    public long TotalSize { get; set; }
+    public DateTime MaxMtimeUtc { get; set; }
+
+    /// <summary>Hash of the (sorted) audio file names, so a rename is noticed too.</summary>
+    public string NameHash { get; set; } = string.Empty;
+
+    /// <summary>The folder's own last-write time; changes whenever a file is added/removed/renamed.</summary>
+    public DateTime DirMtimeUtc { get; set; }
 }
