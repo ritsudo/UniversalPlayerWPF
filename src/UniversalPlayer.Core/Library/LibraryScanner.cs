@@ -45,6 +45,13 @@ public sealed class LibraryScanner
         var pathIndex = _tracks.LoadPathIndex();
         var parked = fastScan ? _tracks.LoadParked() : new Dictionary<string, Track>();
         var previous = _folders.Load();
+        var presentCounts = fastScan ? _tracks.LoadPresentCountsByDir() : null;
+
+        // A folder signature alone is not enough: the database may still hold rows (missing = 0)
+        // whose files are gone, left behind by an earlier scan. If the number of rows we think are
+        // present in a folder differs from its recorded file count, that folder must be re-checked.
+        bool DbAgrees(string dir, ScanFolder? stored) =>
+            presentCounts is null || stored is null || presentCounts.GetValueOrDefault(dir, 0) == stored.FileCount;
 
         // ---- which folders actually need work? ----
         var dirs = new List<DirScan>();
@@ -55,7 +62,7 @@ public sealed class LibraryScanner
             previous.TryGetValue(dir, out var stored);
 
             // fast path: nothing was added, removed or renamed inside this folder
-            if (fastScan && stored is not null && Ms(stored.DirMtimeUtc) == dirMtime)
+            if (fastScan && stored is not null && Ms(stored.DirMtimeUtc) == dirMtime && DbAgrees(dir, stored))
             {
                 dirs.Add(new DirScan(dir, stored.FileCount, stored.TotalSize, stored.MaxMtimeUtc, stored.NameHash, dirMtime) { Unchanged = true });
                 report.FilesSeen += stored.FileCount;
@@ -67,7 +74,7 @@ public sealed class LibraryScanner
                 files.Count == 0 ? DateTime.MinValue : files.Max(f => f.Mtime), HashNames(files), dirMtime)
             {
                 Files = files
-            };            scan.Unchanged = fastScan && stored is not null && scan.MatchesSignature(stored);
+            };            scan.Unchanged = fastScan && stored is not null && scan.MatchesSignature(stored) && DbAgrees(dir, stored);
             dirs.Add(scan);
             report.FilesSeen += files.Count;
         }
@@ -86,6 +93,7 @@ public sealed class LibraryScanner
         _db.InTransaction((conn, tx) =>
         {
             Execute(conn, tx, "CREATE TEMP TABLE IF NOT EXISTS _seen_dir(dir TEXT PRIMARY KEY); DELETE FROM _seen_dir;");
+            Execute(conn, tx, "CREATE TEMP TABLE IF NOT EXISTS _changed_dir(dir TEXT PRIMARY KEY); DELETE FROM _changed_dir;");
             using (var insert = conn.CreateCommand())
             {
                 insert.Transaction = tx;
@@ -97,6 +105,24 @@ public sealed class LibraryScanner
                     insert.ExecuteNonQuery();
                 }
             }
+            using (var insert = conn.CreateCommand())
+            {
+                insert.Transaction = tx;
+                insert.CommandText = "INSERT OR IGNORE INTO _changed_dir(dir) VALUES(@d);";
+                var param = insert.Parameters.Add("@d", SqliteType.Text);
+                foreach (var dir in changed)
+                {
+                    param.Value = dir.Dir;
+                    insert.ExecuteNonQuery();
+                }
+            }
+
+            // Remember which rows were already flagged missing before this scan. A row that was
+            // missing and lives in a folder that did not change must stay missing: the folder
+            // signature proves its file is still absent. Only rows in a folder we re-check below,
+            // or rows that were present, are allowed back.
+            Execute(conn, tx, "CREATE TEMP TABLE IF NOT EXISTS _was_missing(id INTEGER PRIMARY KEY); DELETE FROM _was_missing;");
+            Execute(conn, tx, "INSERT INTO _was_missing(id) SELECT id FROM tracks WHERE missing = 1;");
 
             // everything is "gone" until proven present again (folder level, so unchanged
             // folders cost one statement rather than one per file)
@@ -104,7 +130,10 @@ public sealed class LibraryScanner
             using (var unmark = conn.CreateCommand())
             {
                 unmark.Transaction = tx;
-                unmark.CommandText = "UPDATE tracks SET missing = 0, last_seen_utc = @now WHERE dir IN (SELECT dir FROM _seen_dir);";
+                unmark.CommandText =
+                    "UPDATE tracks SET missing = 0, last_seen_utc = @now " +
+                    "WHERE dir IN (SELECT dir FROM _seen_dir) " +
+                    "AND (id NOT IN (SELECT id FROM _was_missing) OR dir IN (SELECT dir FROM _changed_dir));";
                 unmark.Parameters.AddWithValue("@now", DbValue.ToDb(now));
                 unmark.ExecuteNonQuery();
             }

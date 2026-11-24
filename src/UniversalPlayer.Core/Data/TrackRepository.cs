@@ -504,6 +504,23 @@ public sealed class TrackRepository
         return map;
     }
 
+    /// <summary>
+    /// Number of rows currently believed present (missing = 0) per directory. Compared with a
+    /// folder's stored file count this reveals a folder whose signature says one thing while the
+    /// database still holds rows whose files are gone (e.g. after a rename), so it gets re-checked.
+    /// </summary>
+    public Dictionary<string, int> LoadPresentCountsByDir()
+    {
+        using var c = _db.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = "SELECT dir, COUNT(*) FROM tracks WHERE missing = 0 AND dir IS NOT NULL GROUP BY dir;";
+        var map = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            map[r.GetString(0)] = r.GetInt32(1);
+        return map;
+    }
+
     /// <summary>Rows currently flagged missing, keyed by "file name|size" so a moved file can be re-pointed.</summary>
     public Dictionary<string, Track> LoadParked()
     {
